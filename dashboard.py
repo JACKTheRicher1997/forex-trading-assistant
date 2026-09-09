@@ -675,7 +675,7 @@ with tab_daily:
         )
 
         # แบนเนอร์แจ้งเตือนข่าวที่กำลังจะออกในอีก 10 นาที
-        now_daily = datetime.datetime.now()
+        now_daily = datetime.datetime.now().astimezone()
         urgent_news = [
             item for item in day_news_items
             if 0 < (item.date_local - now_daily).total_seconds() <= 600
