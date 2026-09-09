@@ -151,7 +151,7 @@ with st.sidebar:
     # ตัวเลือกตั้งค่า Symbol & Timeframe
     selected_symbol = st.selectbox(
         "สัญลักษณ์คู่เงิน (Symbol)",
-        options=[config.mt5.symbol, "XAUUSDm", "EURUSD", "GBPUSD", "USDJPY", "BTCUSD"],
+        options=[config.mt5.symbol, "XAUUSD=X", "EURUSD=X", "GBPUSD=X", "JPY=X", "BTC-USD"],
         index=0,
     )
     selected_tf = st.selectbox(
@@ -174,8 +174,16 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 📲 ทดสอบการแจ้งเตือน LINE")
 
-    line_cfg = config.line
-    has_token = bool(line_cfg.channel_access_token and line_cfg.user_id)
+    # ดึงค่าจากหน้า Streamlit Secrets มาใช้งานโดยตรงแทนระบบ config เดิม
+    try:
+        channel_access_token = st.secrets["LINE_CHANNEL_ACCESS_TOKEN"]
+        user_id = st.secrets["LINE_USER_ID"]
+        has_token = bool(channel_access_token and user_id)
+    except Exception:
+        has_token = False
+        channel_access_token = None
+        user_id = None
+
     st.caption(
         f"สถานะ LINE Config: "
         f"{'✅ Token & User ID พร้อมใช้งาน' if has_token else '❌ Token/User ID ว่าง'}"
@@ -186,8 +194,14 @@ with st.sidebar:
     if st.button("🔔 ส่งข้อความทดสอบ LINE", use_container_width=True):
         with st.spinner("กำลังส่งข้อความทดสอบ..."):
             notifier = notification_service.notifier
+
+            # บังคับป้อนรหัสจาก Streamlit Secrets เข้าไปในระบบแจ้งเตือนโดยตรง
+            if has_token:
+                notifier.channel_access_token = channel_access_token
+                notifier.user_id = user_id
+
             last_error = None
-            if line_cfg.channel_access_token and line_cfg.user_id:
+            if has_token:
                 _status_ok = False
                 try:
                     _status_ok = notifier.send_via_messaging_api(
@@ -205,12 +219,6 @@ with st.sidebar:
                         "ตรวจสอบว่า: 1) Token ถูกต้อง 2) User ID ถูกต้อง "
                         "3) user ต้องมากด 'Add friend' / follow LINE Official Account แล้ว"
                     )
-            elif line_cfg.notify_token:
-                res = notifier.send_via_line_notify("🔔 [Test Alert] ทดสอบการเชื่อมต่อระบบแจ้งเตือน")
-                if res:
-                    st.success("ส่งข้อความทดสอบผ่าน LINE Notify สำเร็จ!")
-                else:
-                    st.error("LINE Notify ส่งไม่สำเร็จ")
             else:
                 st.error("ไม่พบ Token ใดเลย กรุณาตั้งค่า Secrets ก่อน")
 
