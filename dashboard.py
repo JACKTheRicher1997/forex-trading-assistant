@@ -148,27 +148,39 @@ with st.sidebar:
     st.caption("ระบบวิเคราะห์ EMA Cross & แจ้งเตือนข่าวแดง ForexFactory")
     st.markdown("---")
 
-    # ตัวเลือกตั้งค่า Symbol & Timeframe
-    options = ["XAUUSDm", "EURUSD", "GBPUSD", "USDJPY", "BTCUSD", "ETHUSD"]
-    default_symbol = (config.mt5.symbol if config.mt5.symbol in options else "XAUUSDm")
+    # ดึงค่าเริ่มต้นคู่เงิน ไทม์เฟรม และ EMA จาก Streamlit Secrets
+    default_symbol = st.secrets.get("SYMBOL", "XAUUSDm")
+    default_tf = st.secrets.get("TIMEFRAME", "M5")
+    default_ema_fast = int(st.secrets.get("EMA_FAST", 50))
+    default_ema_slow = int(st.secrets.get("EMA_SLOW", 150))
+
+    # ตัวเลือกตั้งค่า Symbol & Timeframe (กำหนดให้ดึงค่าเริ่มต้นจาก Secrets)
     selected_symbol = st.selectbox(
         "สัญลักษณ์คู่เงิน (Symbol)",
-        options=options,
-        index=options.index(default_symbol),
+        options=[default_symbol, "EURUSD", "GBPUSD", "USDJPY", "BTCUSD"],
+        index=0,
     )
+
+    # แปลงชื่อเล่นไทม์เฟรมให้ตรงกับตัวเลือกในแอปของคุณ
+    tf_options = ["M5", "M15", "H1", "H4", "D1"]
+    try:
+        tf_index = tf_options.index(default_tf)
+    except ValueError:
+        tf_index = 0  # ถ้าหาไม่เจอให้เลือกตัวแรก (M5) เป็นค่าเริ่มต้น
+
     selected_tf = st.selectbox(
         "กรอบเวลา (Timeframe)",
-        options=["M15", "H1", "H4", "D1", "M5"],
-        index=4,
+        options=tf_options,
+        index=tf_index,
     )
 
     st.markdown("---")
     st.markdown("### ⚙️ การตั้งค่า EMA")
     col_ema1, col_ema2 = st.columns(2)
     with col_ema1:
-        fast_ema = st.number_input("EMA Fast", min_value=5, max_value=200, value=config.indicator.ema_fast)
+        fast_ema = st.number_input("EMA Fast", min_value=5, max_value=200, value=default_ema_fast)
     with col_ema2:
-        slow_ema = st.number_input("EMA Slow", min_value=20, max_value=500, value=config.indicator.ema_slow)
+        slow_ema = st.number_input("EMA Slow", min_value=20, max_value=500, value=default_ema_slow)
 
     indicator_service.fast_period = fast_ema
     indicator_service.slow_period = slow_ema
