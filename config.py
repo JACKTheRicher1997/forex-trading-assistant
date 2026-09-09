@@ -13,6 +13,36 @@ BASE_DIR = Path(__file__).resolve().parent
 ENV_PATH = BASE_DIR / ".env"
 load_dotenv(dotenv_path=ENV_PATH)
 
+# ฟังก์ชันช่วยอ่านค่า: ค้นหาใน Streamlit Secrets ก่อน แล้วค่อยเป็น Environment Variables
+def _get_secret(key: str, default: str = "") -> str:
+    """
+    อ่านค่าจาก Streamlit Secrets (สำหรับ Streamlit Cloud) หรือ Environment Variables
+    ลำดับการค้นหา: 1) Streamlit Secrets  2) os.environ  3) default
+    """
+    # พยายาม import streamlit เฉพาะเมื่อมี (เพื่อให้ยังรันเป็น Bot ได้โดยไม่ต้องมี streamlit)
+    try:
+        import streamlit as st
+
+        value = st.secrets.get(key)
+        if value is not None and str(value).strip() and str(value) not in ("your_channel_access_token", "your_user_id"):
+            return str(value)
+    except Exception:
+        pass
+
+    env_value = os.getenv(key)
+    if env_value and env_value.strip() and env_value not in ("your_channel_access_token", "your_user_id"):
+        return env_value
+
+    return default
+
+
+def _get_env(key: str, default: str = "") -> str:
+    """อ่านค่า Environment Variable ตามปกติ"""
+    value = os.getenv(key)
+    if value and value.strip() and value not in ("your_channel_access_token", "your_user_id"):
+        return value
+    return default
+
 
 @dataclass(frozen=True)
 class MT5Config:
@@ -38,9 +68,9 @@ class LineConfig:
     การตั้งค่าการแจ้งเตือน LINE
     รองรับทั้ง LINE Notify Token ดั้งเดิม และ LINE Messaging API (Official Account)
     """
-    notify_token: str = field(default_factory=lambda: os.getenv("LINE_NOTIFY_TOKEN", ""))
-    channel_access_token: str = field(default_factory=lambda: os.getenv("LINE_CHANNEL_ACCESS_TOKEN", ""))
-    user_id: str = field(default_factory=lambda: os.getenv("LINE_USER_ID", ""))
+    notify_token: str = field(default_factory=lambda: _get_secret("LINE_NOTIFY_TOKEN", ""))
+    channel_access_token: str = field(default_factory=lambda: _get_secret("LINE_CHANNEL_ACCESS_TOKEN", ""))
+    user_id: str = field(default_factory=lambda: _get_secret("LINE_USER_ID", ""))
 
 
 @dataclass(frozen=True)
