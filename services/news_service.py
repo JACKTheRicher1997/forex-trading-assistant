@@ -36,6 +36,7 @@ class ForexNewsItem:
     impact: str  # High, Medium, Low, Holiday
     forecast: str = ""
     previous: str = ""
+    actual: str = ""  # ค่าที่ออกจริง (ถ้ามี)
 
     @property
     def is_high_impact(self) -> bool:
@@ -141,6 +142,7 @@ class ForexFactoryNewsService:
                     impact=item.get("impact", "Low"),
                     forecast=item.get("forecast", ""),
                     previous=item.get("previous", ""),
+                    actual=item.get("actual", ""),
                 )
                 parsed_items.append(news_item)
 

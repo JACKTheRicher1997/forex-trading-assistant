@@ -140,6 +140,45 @@ def get_services():
 
 price_service, indicator_service, news_service, notification_service = get_services()
 
+
+def countdown_to_news(news_date_local) -> str:
+    """
+    คำนวณเวลานับถอยหลังก่อนข่าวออก (เฉพาะข่าวที่ยังไม่ถึงเวลา):
+    - เหลือ <= 10 นาที: '🔴 กำลังออกใน X นาที Y วิ'
+    - ยังอีกนาน: แสดงเวลาเหลือแบบ 'HH:MM:SS'
+    - ผ่านไปแล้ว: '-' (ไม่นับถอยหลัง)
+    """
+    try:
+        now = datetime.datetime.now(news_date_local.tzinfo)
+        delta = news_date_local - now
+        if delta.total_seconds() <= 0:
+            return "-"
+        total_sec = int(delta.total_seconds())
+        days = total_sec // 86400
+        hours = (total_sec % 86400) // 3600
+        minutes = (total_sec % 3600) // 60
+        seconds = total_sec % 60
+
+        if total_sec <= 600:  # เหลือไม่เกิน 10 นาที -> โชว์นับถอยหลังวิ
+            return f"🔴 {minutes}m {seconds:02d}s"
+        if days > 0:
+            return f"{days}d {hours}h {minutes}m"
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    except Exception:
+        return "-"
+
+
+def countdown_tag(news_date_local) -> str:
+    """สร้าง HTML badge สำหรับช่วง 10 นาทีก่อนข่าวออก"""
+    try:
+        now = datetime.datetime.now(news_date_local.tzinfo)
+        delta = news_date_local - now
+        if 0 < delta.total_seconds() <= 600:
+            return '<span style="background:#ef4444;color:#fff;padding:2px 8px;border-radius:10px;font-size:0.8rem;font-weight:bold;">🔴 ใกล้ถึงเวลาออกข่าว</span>'
+    except Exception:
+        pass
+    return ""
+
 # ==========================================
 # 3. Sidebar Controls & System Status
 # ==========================================
@@ -579,9 +618,11 @@ with tab_weekly:
                     "วัน": n.day_name_th,
                     "วันที่": n.date_local.strftime("%d/%m/%Y"),
                     "เวลา (เวลาไทย)": n.time_str,
+                    "นับถอยหลัง": countdown_to_news(n.date_local),
                     "สกุลเงิน": n.country,
                     "ชื่อข่าวเศรษฐกิจ": n.title,
                     "ตัวเลขคาดการณ์ (Forecast)": n.forecast or "-",
+                    "ตัวเลขจริง (Actual)": n.actual or "รอดูผล",
                     "ตัวเลขเดิม (Previous)": n.previous or "-",
                 }
             )
@@ -632,14 +673,39 @@ with tab_daily:
             f"<div style='margin: 10px 0; color: #f87171; font-weight: bold;'>⚠️ พบข่าวสีแดงทั้งหมด {len(day_news_items)} ข่าว ใน {selected_day_label}:</div>",
             unsafe_allow_html=True,
         )
+
+        # แบนเนอร์แจ้งเตือนข่าวที่กำลังจะออกในอีก 10 นาที
+        now_daily = datetime.datetime.now()
+        urgent_news = [
+            item for item in day_news_items
+            if 0 < (item.date_local - now_daily).total_seconds() <= 600
+        ]
+        if urgent_news:
+            urgent_list = "".join(
+                f"• 🔴 {item.time_str} [{item.country}] {item.title}<br/>"
+                for item in urgent_news
+            )
+            st.markdown(
+                f"""
+                <div style="background:rgba(239,68,68,0.15);border:1px solid #ef4444;border-radius:10px;
+                            padding:12px 16px;margin:10px 0;">
+                    <b style="color:#fecaca;">⏰ ข่าวกำลังจะออกในอีกไม่ถึง 10 นาที!</b><br/>
+                    <span style="color:#fecaca;font-size:0.95rem;">{urgent_list}</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        
         day_table = []
         for item in day_news_items:
             day_table.append(
                 {
                     "เวลา (เวลาไทย)": item.time_str,
+                    "นับถอยหลัง": countdown_to_news(item.date_local),
                     "สกุลเงิน": item.country,
                     "ชื่อข่าว": item.title,
                     "Forecast": item.forecast or "-",
+                    "Actual": item.actual or "รอดูผล",
                     "Previous": item.previous or "-",
                 }
             )
@@ -679,6 +745,9 @@ with tab_calendar:
                     "เวลา (เวลาไทย)": n.time_str,
                     "สกุลเงิน": n.country,
                     "ชื่อข่าว": n.title,
+                    "Forecast": n.forecast or "-",
+                    "Actual": n.actual or "รอดูผล",
+                    "Previous": n.previous or "-",
                     "Impact": "🔴 High",
                 }
             )
