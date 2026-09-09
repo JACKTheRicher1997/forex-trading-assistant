@@ -151,7 +151,7 @@ with st.sidebar:
     # ตัวเลือกตั้งค่า Symbol & Timeframe
     selected_symbol = st.selectbox(
         "สัญลักษณ์คู่เงิน (Symbol)",
-        options=[config.mt5.symbol, "XAUUSD=X", "EURUSD=X", "GBPUSD=X", "JPY=X", "BTC-USD"],
+        options=[config.mt5.symbol, "XAUUSDm", "EURUSD", "GBPUSD", "USDJPY", "BTCUSD"],
         index=0,
     )
     selected_tf = st.selectbox(
