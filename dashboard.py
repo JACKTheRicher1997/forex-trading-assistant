@@ -173,13 +173,46 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### 📲 ทดสอบการแจ้งเตือน LINE")
+
+    line_cfg = config.line
+    has_token = bool(line_cfg.channel_access_token and line_cfg.user_id)
+    st.caption(
+        f"สถานะ LINE Config: "
+        f"{'✅ Token & User ID พร้อมใช้งาน' if has_token else '❌ Token/User ID ว่าง'}"
+    )
+    if not has_token:
+        st.warning("ไปตั้งค่า LINE_CHANNEL_ACCESS_TOKEN / LINE_USER_ID ใน Streamlit Secrets ก่อนนะครับ")
+
     if st.button("🔔 ส่งข้อความทดสอบ LINE", use_container_width=True):
         with st.spinner("กำลังส่งข้อความทดสอบ..."):
-            res = notification_service.send_test_message()
-            if res:
-                st.success("ส่งข้อความทดสอบสำเร็จ!")
+            notifier = notification_service.notifier
+            last_error = None
+            if line_cfg.channel_access_token and line_cfg.user_id:
+                _status_ok = False
+                try:
+                    _status_ok = notifier.send_via_messaging_api(
+                        "🔔 [Test Alert] ทดสอบการเชื่อมต่อระบบแจ้งเตือน\n"
+                        "ระบบผู้ช่วยเทรด Forex (Trading Assistant & Alert System)\n"
+                        "สถานะ: ระบบทำงานปกติ พร้อมส่งสัญญาณ Live Cross และข่าวเศรษฐกิจครับ 🚀"
+                    )
+                except Exception as e:
+                    last_error = repr(e)
+                if _status_ok:
+                    st.success("ส่งข้อความทดสอบผ่าน LINE Messaging API สำเร็จ!")
+                else:
+                    st.error(f"LINE Messaging API ส่งไม่สำเร็จ {last_error or ''}")
+                    st.caption(
+                        "ตรวจสอบว่า: 1) Token ถูกต้อง 2) User ID ถูกต้อง "
+                        "3) user ต้องมากด 'Add friend' / follow LINE Official Account แล้ว"
+                    )
+            elif line_cfg.notify_token:
+                res = notifier.send_via_line_notify("🔔 [Test Alert] ทดสอบการเชื่อมต่อระบบแจ้งเตือน")
+                if res:
+                    st.success("ส่งข้อความทดสอบผ่าน LINE Notify สำเร็จ!")
+                else:
+                    st.error("LINE Notify ส่งไม่สำเร็จ")
             else:
-                st.error("ส่งไม่สำเร็จ โปรดตรวจสอบ Token ใน .env")
+                st.error("ไม่พบ Token ใดเลย กรุณาตั้งค่า Secrets ก่อน")
 
     if st.button("📢 ส่งสรุปข่าวแดงสัปดาห์นี้เข้า LINE ทันที", use_container_width=True):
         with st.spinner("กำลังดึงข่าวและส่งเข้า LINE..."):
