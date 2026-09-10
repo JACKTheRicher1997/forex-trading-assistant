@@ -179,6 +179,15 @@ def get_services():
 price_service, indicator_service, news_service, notification_service = get_services()
 
 
+@st.cache_data(ttl=90, show_spinner=False)
+def cached_rates(symbol: str, timeframe_str: str, count: int) -> object:
+    """
+    ดึงข้อมูลแท่งเทียนจาก Yahoo Finance พร้อม Cache (90 วินาที)
+    ทำให้เปิดเว็บ/ย้อนกลับมาดู หรือสลับแท็บ ไม่ต้องโหลดข้อมูลราคาซ้ำสด ๆ ทุกครั้ง
+    """
+    return price_service.get_rates(symbol=symbol, timeframe_str=timeframe_str, count=count)
+
+
 def countdown_to_news(news_date_local) -> str:
     """
     คำนวณเวลานับถอยหลังก่อนข่าวออก (เฉพาะข่าวที่ยังไม่ถึงเวลา):
@@ -413,9 +422,9 @@ with st.sidebar:
 st.markdown("# 🚀 Forex Trading Assistant & Live Alert System")
 st.caption(f"เวลาปัจจุบัน (Local): {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | สกุลเงินหลัก: {selected_symbol}")
 
-# ดึงข้อมูลราคาจาก Yahoo Finance
+# ดึงข้อมูลราคาจาก Yahoo Finance (ใช้ Cache เพื่อให้โหลดเร็วขึ้นเมื่อกลับมาดูซ้ำ)
 with st.spinner("กำลังดึงข้อมูลแท่งเทียนและคำนวณอินดิเคเตอร์..."):
-    df_rates = price_service.get_rates(symbol=selected_symbol, timeframe_str=selected_tf, count=250)
+    df_rates = cached_rates(selected_symbol, selected_tf, 250)
 
 signal_result = None
 if df_rates is not None and len(df_rates) > 0:
@@ -503,7 +512,7 @@ with col_status:
         mtf_cols = st.columns(len(mtf_tfs))
         
         for idx, tf in enumerate(mtf_tfs):
-            tf_df = price_service.get_rates(symbol=selected_symbol, timeframe_str=tf, count=160)
+            tf_df = cached_rates(selected_symbol, tf, 160)
             tf_trend = "NEUTRAL"
             tf_color = "#94a3b8"
             
@@ -675,7 +684,7 @@ st.markdown("---")
 st.markdown("## 🔴 2. ตารางข่าวเศรษฐกิจสีแดง (ForexFactory High-Impact News)")
 st.caption("ระบบรวบรวมและกรองเฉพาะข่าวความสำคัญสูง (High-Impact / ข่าวแดง) ที่ส่งผลกระทบต่อความผันผวนของราคา")
 
-# ดึงข่าวสัปดาห์นี้
+# ดึงข่าวสัปดาห์นี้ (news_service มีระบบ cache ภายใน 5 นาทีอยู่แล้ว)
 all_news_this_week = news_service.fetch_this_week_news(only_high_impact=False)
 red_news_this_week = [n for n in all_news_this_week if n.is_high_impact]
 
