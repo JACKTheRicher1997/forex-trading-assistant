@@ -454,11 +454,11 @@ if signal_result:
     # Banner แสดงเทรนแบบเต็มความกว้างหน้าจอ
     if signal_result.is_bullish:
         st.markdown(
-            """
+            f"""
             <div class="trend-bullish">
                 <h2 style="color: #10b981; margin:0; font-size: 1.8rem;">🟢 CURRENT TREND: BULLISH</h2>
                 <p style="margin: 5px 0 0 0; color: #a7f3d0; font-size: 1.1rem; font-weight: 500;">
-                    EMA 50 อยู่เหนือ EMA 150 (โมเมนตัมขาขึ้น)
+                    ⏱️ Timeframe: {selected_tf} | EMA 50 อยู่เหนือ EMA 150 (โมเมนตัมขาขึ้น)
                 </p>
             </div>
             """,
@@ -466,11 +466,11 @@ if signal_result:
         )
     elif signal_result.is_bearish:
         st.markdown(
-            """
+            f"""
             <div class="trend-bearish">
                 <h2 style="color: #ef4444; margin:0; font-size: 1.8rem;">🔴 CURRENT TREND: BEARISH</h2>
                 <p style="margin: 5px 0 0 0; color: #fecaca; font-size: 1.1rem; font-weight: 500;">
-                    EMA 50 อยู่ใต้ EMA 150 (โมเมนตัมขาลง)
+                    ⏱️ Timeframe: {selected_tf} | EMA 50 อยู่ใต้ EMA 150 (โมเมนตัมขาลง)
                 </p>
             </div>
             """,
@@ -478,10 +478,10 @@ if signal_result:
         )
     else:
         st.markdown(
-            """
+            f"""
             <div class="trend-neutral">
                 <h2 style="color: #94a3b8; margin:0; font-size: 1.8rem;">⚪ CURRENT TREND: NEUTRAL</h2>
-                <p style="margin: 5px 0 0 0;">เส้น EMA กำลังเกาะกลุ่มกัน</p>
+                <p style="margin: 5px 0 0 0;">⏱️ Timeframe: {selected_tf} | เส้น EMA กำลังเกาะกลุ่มกัน</p>
             </div>
             """,
             unsafe_allow_html=True,
