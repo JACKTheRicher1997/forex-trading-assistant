@@ -198,16 +198,46 @@ def format_actual_with_color(item: ForexNewsItem) -> str:
 
 
 def format_actual_text(item: ForexNewsItem) -> str:
-    """จัดรูปแบบตัวเลขจริงสำหรับ st.dataframe (ไม่ใช้ HTML)"""
+    """จัดรูปแบบตัวเลขจริงสำหรับ st.dataframe (สีถูกใช้ผ่าน pandas Styler)"""
     actual = getattr(item, "actual", "") or "รอดูผล"
     actual_color = getattr(item, "actual_color", "")
     if not actual:
         return actual
     if actual_color == "better":
-        return f"🟢 {actual}"
+        return f"{actual} ▲"
     elif actual_color == "worse":
-        return f"🔴 {actual}"
+        return f"{actual} ▼"
     return actual
+
+
+def actual_color_code(item: ForexNewsItem) -> str:
+    """คืนค่า CSS สีของตัวเลขจริง: สีเขียว/แดง/ว่าง (ตามสไตล์ ForexFactory จริง)"""
+    c = getattr(item, "actual_color", "")
+    if c == "better":
+        return "#00aa00"
+    elif c == "worse":
+        return "#cc0000"
+    return ""
+
+
+def style_actual_column(df, colors, col_name):
+    """
+    ใช้ pandas Styler เพื่อระบายสีข้อความของคอลัมน์ Actual
+    - สีเขียว (#00aa00) = ตัวเลขจริงดีกว่าคาดการณ์
+    - สีแดง (#cc0000) = ตัวเลขจริงแย่กว่าคาดการณ์
+    :param df: DataFrame ที่มีคอลัมน์ col_name
+    :param colors: list สีตามแถว (เรียงเดียวกับ df)
+    :param col_name: ชื่อคอลัมน์ Actual
+    """
+    def _style_row(row):
+        styles = [""] * len(row)
+        idx = int(row.name)
+        if 0 <= idx < len(colors) and colors[idx]:
+            col_pos = list(row.index).index(col_name)
+            styles[col_pos] = f"color: {colors[idx]}; font-weight: 700;"
+        return styles
+
+    return df.style.apply(_style_row, axis=1)
 
 # ==========================================
 # 3. Sidebar Controls & System Status
@@ -643,6 +673,7 @@ with tab_weekly:
     st.caption("🟢 ตัวเลขสีเขียว = ดีกว่าคาดการณ์ | 🔴 ตัวเลขสีแดง = แย่กว่าคาดการณ์ | ไม่มีสี = เท่ากับคาดการณ์")
     if red_news_this_week:
         table_data = []
+        actual_colors = []
         for n in red_news_this_week:
             table_data.append(
                 {
@@ -657,8 +688,13 @@ with tab_weekly:
                     "ตัวเลขเดิม (Previous)": n.previous or "-",
                 }
             )
+            actual_colors.append(actual_color_code(n))
         df_weekly = pd.DataFrame(table_data)
-        st.dataframe(df_weekly, use_container_width=True, hide_index=True)
+        st.dataframe(
+            style_actual_column(df_weekly, actual_colors, "ตัวเลขจริง (Actual)"),
+            use_container_width=True,
+            hide_index=True,
+        )
     else:
         st.success("🟢 ยินดีด้วย! สัปดาห์นี้ไม่มีข่าวสีแดง สามารถวางแผนเทรดได้อย่างราบรื่น")
 
@@ -728,6 +764,7 @@ with tab_daily:
             )
         
         day_table = []
+        day_colors = []
         for item in day_news_items:
             day_table.append(
                 {
@@ -740,7 +777,12 @@ with tab_daily:
                     "Previous": item.previous or "-",
                 }
             )
-        st.dataframe(pd.DataFrame(day_table), use_container_width=True, hide_index=True)
+            day_colors.append(actual_color_code(item))
+        st.dataframe(
+            style_actual_column(pd.DataFrame(day_table), day_colors, "Actual"),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 # ----------------------------------------------------
 # Tab 3: ปฏิทินรายเดือน (Monthly Calendar View)
@@ -768,6 +810,7 @@ with tab_calendar:
 
     if matched_month_news:
         cal_table = []
+        cal_colors = []
         for n in matched_month_news:
             cal_table.append(
                 {
@@ -782,7 +825,12 @@ with tab_calendar:
                     "Impact": "🔴 High",
                 }
             )
-        st.dataframe(pd.DataFrame(cal_table), use_container_width=True, hide_index=True)
+            cal_colors.append(actual_color_code(n))
+        st.dataframe(
+            style_actual_column(pd.DataFrame(cal_table), cal_colors, "Actual"),
+            use_container_width=True,
+            hide_index=True,
+        )
     else:
         st.info(f"ไม่มีข้อมูลข่าวแดงในเดือน {month_names[selected_month_idx - 1]} {selected_year} ตามตัวกรองปัจจุบัน")
 
