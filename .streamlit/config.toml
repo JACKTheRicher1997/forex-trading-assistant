@@ -1,0 +1,23 @@
+# Streamlit Global Config
+# ใช้ตั้งค่าพื้นฐาน (Theme / Usage Stats / Server) สำหรับ app ทั้งในเครื่อง
+# และบน Streamlit Cloud (ไซต์จะอ่านไฟล์นี้จากเกิตรวมไปด้วยตอน Deploy)
+
+[theme]
+base = "dark"
+primaryColor = "#10b981"
+backgroundColor = "#0b0e14"
+secondaryBackgroundColor = "#1e293b"
+textColor = "#e2e8f0"
+font = "sans serif"
+
+[browser]
+# ไม่ส่งข้อมูลการใช้งานไปยัง Streamlit (ความเป็นส่วนตัว)
+gatherUsageStats = false
+
+[server]
+# รันแบบ headless (ไม่เปิดเบราว์เซอร์อัตโนมัติตอนรันบน server / Cloud)
+headless = true
+
+[client]
+# ซ่อน error/traceback ละเอียดจากผู้ใช้งานจริง
+showErrorDetails = false
