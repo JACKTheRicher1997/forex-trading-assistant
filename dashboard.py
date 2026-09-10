@@ -553,56 +553,58 @@ if signal_result:
 
         # สรุปเทรน Multi-Timeframe (MTF) ภายในคอลัมน์ซ้าย
         st.markdown("#### 🧭 สรุปเทรน Multi-Timeframe (MTF)")
-        mtf_tfs = ["M5", "M15", "H1", "H4", "D1"]
-        mtf_cols = st.columns(len(mtf_tfs))
+        # จัดเป็น 2 แถว (แถวบน 3 ไทม์เฟรม, แถวล่าง 2 ไทม์เฟรม) เพื่อไม่ให้มีพื้นที่ว่างด้านล่าง
+        mtf_rows = [["M5", "M15", "H1"], ["H4", "D1"]]
 
-        for idx, tf in enumerate(mtf_tfs):
-            tf_df = drop_last_open_candle(cached_rates(selected_symbol, tf, 160))
-            tf_trend = "NEUTRAL"
-            tf_color = "#94a3b8"
+        for row in mtf_rows:
+            row_cols = st.columns(len(row))
+            for col, tf in zip(row_cols, row):
+                tf_df = drop_last_open_candle(cached_rates(selected_symbol, tf, 160))
+                tf_trend = "NEUTRAL"
+                tf_color = "#94a3b8"
 
-            if tf_df is not None and len(tf_df) > 0:
-                tf_res = indicator_service.analyze(tf_df, symbol=selected_symbol, timeframe=tf)
-                if tf_res:
-                    if tf_res.is_bullish:
-                        tf_trend = "BULLISH 🟢"
-                        tf_color = "#10b981"
-                    elif tf_res.is_bearish:
-                        tf_trend = "BEARISH 🔴"
-                        tf_color = "#ef4444"
+                if tf_df is not None and len(tf_df) > 0:
+                    tf_res = indicator_service.analyze(tf_df, symbol=selected_symbol, timeframe=tf)
+                    if tf_res:
+                        if tf_res.is_bullish:
+                            tf_trend = "BULLISH 🟢"
+                            tf_color = "#10b981"
+                        elif tf_res.is_bearish:
+                            tf_trend = "BEARISH 🔴"
+                            tf_color = "#ef4444"
 
-            with mtf_cols[idx]:
-                # กล่องสรุปเทรนแบบกดได้: คลิกเพื่อสลับเลือกกรอบเวลา (Timeframe) ใน sidebar
-                btn_label = f"{tf}\n{tf_trend}"
-                # เน้นไทม์เฟรมที่กำลังเลือกอยู่
-                is_active = (tf == selected_tf)
-                # ใช้ on_click callback (รันก่อน widget instantiate) เพื่อไม่ให้ error
-                # ตอนเขียนค่า selectbox ผ่าน session_state
-                st.button(
-                    btn_label,
-                    key=f"mtf_{tf}",
-                    use_container_width=True,
-                    type="primary" if is_active else "secondary",
-                    on_click=_switch_timeframe,
-                    args=(tf,),
-                )
-                # ระบายสีขอบล่างของปุ่มตามสถานะเทรนของแต่ละไทม์เฟรม
-                st.markdown(
-                    f"""
-                    <style>
-                    .st-key-mtf_{tf} button {{
-                        border-bottom: 3px solid {tf_color} !important;
-                        text-align: center;
-                        font-weight: 600;
-                    }}
-                    .st-key-mtf_{tf} button:hover {{
-                        filter: brightness(1.25);
-                        border-color: {tf_color};
-                    }}
-                    </style>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                with col:
+                    # กล่องสรุปเทรนแบบกดได้: คลิกเพื่อสลับเลือกกรอบเวลา (Timeframe) ใน sidebar
+                    btn_label = f"{tf}\n{tf_trend}"
+                    # เน้นไทม์เฟรมที่กำลังเลือกอยู่
+                    is_active = (tf == selected_tf)
+                    # ใช้ on_click callback (รันก่อน widget instantiate) เพื่อไม่ให้ error
+                    # ตอนเขียนค่า selectbox ผ่าน session_state
+                    st.button(
+                        btn_label,
+                        key=f"mtf_{tf}",
+                        use_container_width=True,
+                        type="primary" if is_active else "secondary",
+                        on_click=_switch_timeframe,
+                        args=(tf,),
+                    )
+                    # ระบายสีขอบล่างของปุ่มตามสถานะเทรนของแต่ละไทม์เฟรม
+                    st.markdown(
+                        f"""
+                        <style>
+                        .st-key-mtf_{tf} button {{
+                            border-bottom: 3px solid {tf_color} !important;
+                            text-align: center;
+                            font-weight: 600;
+                        }}
+                        .st-key-mtf_{tf} button:hover {{
+                            filter: brightness(1.25);
+                            border-color: {tf_color};
+                        }}
+                        </style>
+                        """,
+                        unsafe_allow_html=True,
+                    )
 
     with col_gauge:
         # หน้าปัดวัดระยะห่าง EMA แบบยืดหยุ่น (Responsive)
