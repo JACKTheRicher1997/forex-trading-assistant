@@ -450,7 +450,7 @@ if df_rates is not None and len(df_rates) > 0:
 # ==========================================
 st.markdown("## 📊 1. สถานะอินดิเคเตอร์ & การตัดกันของ EMA (EMA Cross)")
 
-col_status, col_gauge = st.columns([1.2, 1.0])
+col_status, col_gauge = st.columns([3, 2])
 
 with col_status:
     if signal_result:
@@ -588,6 +588,7 @@ with col_gauge:
             )
         )
         fig_gauge.update_layout(
+            autosize=True,
             height=270,
             margin=dict(l=20, r=20, t=75, b=20),
             title=dict(text="📏 EMA Distance (EMA50 - EMA150)", x=0.5, xanchor="center", font=dict(size=14, color="#cbd5e1")),
@@ -681,6 +682,7 @@ if df_ema_full is not None and len(df_ema_full) > 0:
         )
 
         fig_chart.update_layout(
+            autosize=True,
             template="plotly_dark",
             height=500,
             margin=dict(l=10, r=10, t=10, b=10),
