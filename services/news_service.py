@@ -48,11 +48,22 @@ class ForexNewsItem:
     forecast: str = ""
     previous: str = ""
     actual: str = ""  # ค่าที่ออกจริง (ถ้ามี)
+    actual_color: str = ""  # สีของตัวเลขจริง: "better" (เขียว), "worse" (แดง), "" (ปกติ)
 
     @property
     def is_high_impact(self) -> bool:
         """ตรวจสอบว่าเป็นข่าวสีแดง (High Impact) หรือไม่"""
         return self.impact.lower() == "high"
+
+    @property
+    def is_actual_better(self) -> bool:
+        """ตรวจสอบว่าตัวเลขจริงดีกว่าคาดการณ์ (สีเขียว) หรือไม่"""
+        return self.actual_color == "better"
+
+    @property
+    def is_actual_worse(self) -> bool:
+        """ตรวจสอบว่าตัวเลขจริงแย่กว่าคาดการณ์ (สีแดง) หรือไม่"""
+        return self.actual_color == "worse"
 
     @property
     def time_str(self) -> str:
@@ -315,6 +326,8 @@ class ForexFactoryNewsService:
                         impact_class = str(c)
             impact = self._IMPACT_MAP.get(impact_class, "Low")
 
+            actual_text, actual_color = self._extract_actual_with_color(tr)
+
             items.append(
                 ForexNewsItem(
                     title=self._extract_text(tr, ".calendar__event-title") or "Unknown",
@@ -324,7 +337,8 @@ class ForexFactoryNewsService:
                     impact=impact,
                     forecast=self._clean_value(self._extract_text(tr, ".calendar__forecast")),
                     previous=self._clean_value(self._extract_text(tr, ".calendar__previous")),
-                    actual=self._clean_value(self._extract_text(tr, ".calendar__actual")),
+                    actual=self._clean_value(actual_text),
+                    actual_color=actual_color,
                 )
             )
 
@@ -337,6 +351,27 @@ class ForexFactoryNewsService:
         if el is None:
             return ""
         return el.get_text(" ", strip=True).replace("\xa0", " ")
+
+    @staticmethod
+    def _extract_actual_with_color(container) -> Tuple[str, str]:
+        """
+        ดึงข้อความและสีของตัวเลขจริง (Actual) จากหน้า ForexFactory
+        ForexFactory ใช้ CSS class 'better' (สีเขียว) หรือ 'worse' (สีแดง)
+        บน <span> ที่ครอบค่า Actual เพื่อแสดงว่าดีกว่าหรือแย่กว่าคาดการณ์
+        :return: (actual_text, actual_color) เช่น ("2.5%", "better") หรือ ("1.2%", "worse")
+        """
+        el = container.select_one(".calendar__actual")
+        if el is None:
+            return "", ""
+        # หา <span> ที่มี class 'better' หรือ 'worse' (ตัวเลขที่มีสี)
+        span = el.select_one("span.better, span.worse")
+        if span:
+            color = "better" if "better" in span.get("class", []) else "worse"
+            text = span.get_text(" ", strip=True).replace("\xa0", " ")
+            return text, color
+        # ถ้าไม่มี span ที่มีสี ให้ดึงข้อความปกติ
+        text = el.get_text(" ", strip=True).replace("\xa0", " ")
+        return text, ""
 
     @staticmethod
     def _clean_value(value: str) -> str:

@@ -177,7 +177,35 @@ def countdown_tag(news_date_local) -> str:
             return '<span style="background:#ef4444;color:#fff;padding:2px 8px;border-radius:10px;font-size:0.8rem;font-weight:bold;">🔴 ใกล้ถึงเวลาออกข่าว</span>'
     except Exception:
         pass
-    return ""
+
+
+def format_actual_with_color(item: ForexNewsItem) -> str:
+    """
+    จัดรูปแบบตัวเลขจริง (Actual) พร้อมสีตาม ForexFactory
+    - better (สีเขียว): ตัวเลขจริงดีกว่าคาดการณ์
+    - worse (สีแดง): ตัวเลขจริงแย่กว่าคาดการณ์
+    - ปกติ: ไม่มีสีพิเศษ
+    """
+    actual = item.actual or "รอดูผล"
+    if not item.actual:
+        return actual
+    if item.actual_color == "better":
+        return f'<span style="color:#00aa00;font-weight:700;">{actual} ▲</span>'
+    elif item.actual_color == "worse":
+        return f'<span style="color:#cc0000;font-weight:700;">{actual} ▼</span>'
+    return actual
+
+
+def format_actual_text(item: ForexNewsItem) -> str:
+    """จัดรูปแบบตัวเลขจริงสำหรับ st.dataframe (ไม่ใช้ HTML)"""
+    actual = item.actual or "รอดูผล"
+    if not item.actual:
+        return actual
+    if item.actual_color == "better":
+        return f"🟢 {actual}"
+    elif item.actual_color == "worse":
+        return f"🔴 {actual}"
+    return actual
 
 # ==========================================
 # 3. Sidebar Controls & System Status
@@ -610,6 +638,7 @@ tab_weekly, tab_daily, tab_calendar = st.tabs(
 # ----------------------------------------------------
 with tab_weekly:
     st.markdown("### 📋 ตารางสรุปข่าวแดงของสัปดาห์ปัจจุบัน")
+    st.caption("🟢 ตัวเลขสีเขียว = ดีกว่าคาดการณ์ | 🔴 ตัวเลขสีแดง = แย่กว่าคาดการณ์ | ไม่มีสี = เท่ากับคาดการณ์")
     if red_news_this_week:
         table_data = []
         for n in red_news_this_week:
@@ -622,7 +651,7 @@ with tab_weekly:
                     "สกุลเงิน": n.country,
                     "ชื่อข่าวเศรษฐกิจ": n.title,
                     "ตัวเลขคาดการณ์ (Forecast)": n.forecast or "-",
-                    "ตัวเลขจริง (Actual)": n.actual or "รอดูผล",
+                    "ตัวเลขจริง (Actual)": format_actual_text(n),
                     "ตัวเลขเดิม (Previous)": n.previous or "-",
                 }
             )
@@ -705,7 +734,7 @@ with tab_daily:
                     "สกุลเงิน": item.country,
                     "ชื่อข่าว": item.title,
                     "Forecast": item.forecast or "-",
-                    "Actual": item.actual or "รอดูผล",
+                    "Actual": format_actual_text(item),
                     "Previous": item.previous or "-",
                 }
             )
@@ -746,7 +775,7 @@ with tab_calendar:
                     "สกุลเงิน": n.country,
                     "ชื่อข่าว": n.title,
                     "Forecast": n.forecast or "-",
-                    "Actual": n.actual or "รอดูผล",
+                    "Actual": format_actual_text(n),
                     "Previous": n.previous or "-",
                     "Impact": "🔴 High",
                 }
