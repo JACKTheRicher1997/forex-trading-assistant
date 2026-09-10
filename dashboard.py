@@ -10,7 +10,6 @@ Trading Assistant & Alert System - Web Dashboard
 
 import datetime
 import calendar
-import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
@@ -93,6 +92,45 @@ st.markdown(
         color: #6ee7b7;
         font-size: 1.05rem;
         font-weight: 600;
+    }
+
+    /* News Table (อ่านง่าย ตัวเลขใหญ่ พอดีคอลัมน์) */
+    .news-table-wrap {
+        overflow-x: auto;
+        margin: 12px 0 20px 0;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 10px;
+        background: rgba(15, 23, 42, 0.6);
+    }
+    .news-table {
+        width: 100%;
+        border-collapse: collapse;
+        color: #e2e8f0;
+        font-size: 1rem;
+        line-height: 1.35;
+    }
+    .news-table th {
+        background: rgba(30, 41, 59, 0.8);
+        color: #94a3b8;
+        font-weight: 700;
+        font-size: 0.9rem;
+        text-align: left;
+        padding: 10px 12px;
+        white-space: nowrap;
+        border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+        position: sticky;
+        top: 0;
+    }
+    .news-table td {
+        padding: 9px 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        vertical-align: middle;
+    }
+    .news-table tbody tr:hover {
+        background: rgba(255, 255, 255, 0.04);
+    }
+    .news-table tbody tr:last-child td {
+        border-bottom: none;
     }
 
     /* Header styling */
@@ -220,24 +258,38 @@ def actual_color_code(item: ForexNewsItem) -> str:
     return ""
 
 
-def style_actual_column(df, colors, col_name):
+def render_html_table(rows: list, colors: list, actual_col: str) -> str:
     """
-    ใช้ pandas Styler เพื่อระบายสีข้อความของคอลัมน์ Actual
-    - สีเขียว (#00aa00) = ตัวเลขจริงดีกว่าคาดการณ์
-    - สีแดง (#cc0000) = ตัวเลขจริงแย่กว่าคาดการณ์
-    :param df: DataFrame ที่มีคอลัมน์ col_name
-    :param colors: list สีตามแถว (เรียงเดียวกับ df)
-    :param col_name: ชื่อคอลัมน์ Actual
+    สร้าง HTML Table ที่อ่านง่าย ตัวเลขใหญ่ พอดีกับคอลัมน์
+    :param rows: list ของ dict (แต่ละ dict คือ 1 แถว)
+    :param colors: list สีของคอลัมน์ Actual ตามแถว (ว่าง = สีปกติ)
+    :param actual_col: ชื่อคอลัมน์ Actual ที่จะระบายสี
+    :return: HTML string
     """
-    def _style_row(row):
-        styles = [""] * len(row)
-        idx = int(row.name)
-        if 0 <= idx < len(colors) and colors[idx]:
-            col_pos = list(row.index).index(col_name)
-            styles[col_pos] = f"color: {colors[idx]}; font-weight: 700;"
-        return styles
-
-    return df.style.apply(_style_row, axis=1)
+    if not rows:
+        return ""
+    columns = list(rows[0].keys())
+    right_align_hint = ("actual", "forecast", "previous", "เวลา", "นับถอย")
+    thead = "".join(f"<th>{c}</th>" for c in columns)
+    tbody = ""
+    for i, row in enumerate(rows):
+        cells = ""
+        for c in columns:
+            val = row[c]
+            align = "right" if any(h in str(c).lower() for h in right_align_hint) else "left"
+            if c == actual_col and colors and i < len(colors) and colors[i]:
+                cells += (
+                    f'<td style="color:{colors[i]};font-weight:700;text-align:{align};'
+                    f'white-space:nowrap;">{val}</td>'
+                )
+            else:
+                cells += f"<td style=\"text-align:{align};\">{val}</td>"
+        tbody += f"<tr>{cells}</tr>"
+    return (
+        '<div class="news-table-wrap">'
+        f'<table class="news-table"><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table>'
+        "</div>"
+    )
 
 # ==========================================
 # 3. Sidebar Controls & System Status
@@ -689,11 +741,9 @@ with tab_weekly:
                 }
             )
             actual_colors.append(actual_color_code(n))
-        df_weekly = pd.DataFrame(table_data)
-        st.dataframe(
-            style_actual_column(df_weekly, actual_colors, "ตัวเลขจริง (Actual)"),
-            use_container_width=True,
-            hide_index=True,
+        st.markdown(
+            render_html_table(table_data, actual_colors, "ตัวเลขจริง (Actual)"),
+            unsafe_allow_html=True,
         )
     else:
         st.success("🟢 ยินดีด้วย! สัปดาห์นี้ไม่มีข่าวสีแดง สามารถวางแผนเทรดได้อย่างราบรื่น")
@@ -778,10 +828,9 @@ with tab_daily:
                 }
             )
             day_colors.append(actual_color_code(item))
-        st.dataframe(
-            style_actual_column(pd.DataFrame(day_table), day_colors, "Actual"),
-            use_container_width=True,
-            hide_index=True,
+        st.markdown(
+            render_html_table(day_table, day_colors, "Actual"),
+            unsafe_allow_html=True,
         )
 
 # ----------------------------------------------------
@@ -826,10 +875,9 @@ with tab_calendar:
                 }
             )
             cal_colors.append(actual_color_code(n))
-        st.dataframe(
-            style_actual_column(pd.DataFrame(cal_table), cal_colors, "Actual"),
-            use_container_width=True,
-            hide_index=True,
+        st.markdown(
+            render_html_table(cal_table, cal_colors, "Actual"),
+            unsafe_allow_html=True,
         )
     else:
         st.info(f"ไม่มีข้อมูลข่าวแดงในเดือน {month_names[selected_month_idx - 1]} {selected_year} ตามตัวกรองปัจจุบัน")
