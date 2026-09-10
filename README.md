@@ -2,6 +2,8 @@
 
 ระบบผู้ช่วยเทรด Forex ครบวงจร พัฒนาด้วยภาษา **Python** ตามหลักการ **Object-Oriented Programming (OOP)** และ **Clean Architecture** พร้อมหน้าเว็บ Dashboard ธีม Dark Mode สวยงาม และระบบแจ้งเตือนเข้าสู่ LINE อัตโนมัติ
 
+> 📖 **ต้องการคู่มือละเอียดทีละขั้นตอน?** เปิดได้ที่ [`SETUP_GUIDE.md`](SETUP_GUIDE.md) — อธิบายการทำงานของ Dashboard, บอท LINE, และวิธีตั้งค่า Secrets ทั้งใน GitHub และ Streamlit
+
 ---
 
 ## 🌟 จุดเด่นและฟังก์ชันการทำงานหลัก
