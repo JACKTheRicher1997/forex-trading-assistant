@@ -49,6 +49,11 @@ def _st_secret(key: str, default: str = ""):
         pass
     return default
 
+
+def _switch_timeframe(tf: str) -> None:
+    """Callback เมื่อกดปุ่ม MTF: ตั้งค่า selectbox 'กรอบเวลา (Timeframe)' ก่อน rerun"""
+    st.session_state["select_tf"] = tf
+
 # ==========================================
 # 1. Page Configuration & Custom Dark CSS
 # ==========================================
@@ -571,14 +576,16 @@ if signal_result:
                 btn_label = f"{tf}\n{tf_trend}"
                 # เน้นไทม์เฟรมที่กำลังเลือกอยู่
                 is_active = (tf == selected_tf)
-                if st.button(
+                # ใช้ on_click callback (รันก่อน widget instantiate) เพื่อไม่ให้ error
+                # ตอนเขียนค่า selectbox ผ่าน session_state
+                st.button(
                     btn_label,
                     key=f"mtf_{tf}",
                     use_container_width=True,
                     type="primary" if is_active else "secondary",
-                ):
-                    st.session_state["select_tf"] = tf
-                    st.rerun()
+                    on_click=_switch_timeframe,
+                    args=(tf,),
+                )
                 # ระบายสีขอบล่างของปุ่มตามสถานะเทรนของแต่ละไทม์เฟรม
                 st.markdown(
                     f"""
