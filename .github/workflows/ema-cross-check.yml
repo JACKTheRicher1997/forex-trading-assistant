@@ -1,0 +1,35 @@
+name: EMA Cross Check (LINE Alert)
+
+on:
+  schedule:
+    # ตรวจสอบสัญญาณ EMA Cross ทุก 5 นาที (GitHub Actions cron ต่ำสุด 5 นาที)
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  check-ema:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency: ema-cross-check
+    env:
+      LINE_NOTIFY_TOKEN: ${{ secrets.LINE_NOTIFY_TOKEN }}
+      LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+      LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+      SYMBOL: "XAUUSDm"
+      TIMEFRAME: "M5"
+      EMA_FAST: "50"
+      EMA_SLOW: "150"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run EMA cross check
+        run: python main.py --check-ema-now

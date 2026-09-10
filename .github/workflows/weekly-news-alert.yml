@@ -1,0 +1,33 @@
+name: Weekly News Alert (LINE)
+
+on:
+  schedule:
+    # ทุกวันจันทร์ 06:30 น. เวลาไทย = วันอาทิตย์ 23:30 UTC
+    - cron: "30 23 * * 0"
+  workflow_dispatch:
+
+jobs:
+  send-news:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      LINE_NOTIFY_TOKEN: ${{ secrets.LINE_NOTIFY_TOKEN }}
+      LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+      LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+      TIMEZONE: "Asia/Bangkok"
+      WEEKLY_ALERT_DAY: "monday"
+      WEEKLY_ALERT_TIME: "06:30"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Send weekly red news summary to LINE
+        run: python main.py --send-news-now
