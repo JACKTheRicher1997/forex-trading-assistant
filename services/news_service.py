@@ -12,6 +12,7 @@ ForexFactory News Service Module
 
 import datetime
 import re
+from collections import Counter
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Tuple
 import requests
@@ -193,6 +194,8 @@ class ForexFactoryNewsService:
         # 1) ลอง scrape หน้า Calendar ของเว็บก่อน เพราะมีค่า Actual/Forecast/Previous จริง
         html_items = self._scrape_html_items()
         if html_items:
+            # ตรวจสอบและปรับเวลาข่าวที่ได้จาก HTML ให้ตรงกับเวลาจริง (ใช้ JSON Feed ที่ระบุ UTC Offset ชัดเจน)
+            html_items = self._reconcile_html_times_with_json(html_items)
             self._cached_news = html_items
             self._last_fetched = now
             logger.info(f"ดึงข่าวจากหน้า Calendar ของเว็บ ForexFactory สำเร็จ: พบจำนวน {len(html_items)} รายการ")
@@ -254,6 +257,73 @@ class ForexFactoryNewsService:
         except Exception as e:
             logger.error(f"เกิดข้อผิดพลาดในการดึงข่าวจาก ForexFactory: {e}", exc_info=True)
             return False
+
+    def _reconcile_html_times_with_json(self, items: List[ForexNewsItem]) -> List[ForexNewsItem]:
+        """
+        ตรวจสอบความถูกต้องของเวลาข่าวที่ parse จาก HTML โดยเทียบกับ JSON Feed
+        (JSON Feed ระบุ Timezone Offset ชัดเจน เช่น -04:00 จึงถือเป็นเวลามาตรฐาน)
+
+        สาเหตุที่ต้องมีขั้นตอนนี้: ForexFactory เรนเดอร์เวลาในหน้าเว็บตาม Timezone ของผู้เข้าชม
+        ถ้าตรวจจับ Timezone ผิด (เช่น Page เรนเดอร์เวลาเดิมถูกต้องแต่อ่านผิดโซน) เวลาจะเพี้ยน
+        เป็นค่าคงที่ เช่น 3 ชั่วโมง (คลาดเคลื่อนตามผู้ใช้รายงาน) ฟังก์ชันนี้จะปรับเวลาทั้งหมดให้ตรงใหม่
+        """
+        try:
+            headers = {
+                "User-Agent": self._BROWSER_HEADERS["User-Agent"],
+                "Accept": "application/json",
+            }
+            resp = requests.get(self.THIS_WEEK_URL, headers=headers, timeout=12)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            logger.debug(f"ไม่สามารถดึง JSON Feed เพื่อเทียบเวลาได้ ข้ามการปรับเวลา: {e}")
+            return items
+
+        # สร้างตารางค้นหา: (สกุล, ชื่อข่าว) -> รายการเวลา UTC จริง
+        lookup: Dict[Tuple[str, str], List[datetime.datetime]] = {}
+        for row in data:
+            dt_obj = self._parse_datetime(row.get("date", ""))
+            if dt_obj is None:
+                continue
+            key = (str(row.get("country", "")).strip().upper(), str(row.get("title", "")).strip())
+            lookup.setdefault(key, []).append(dt_obj)
+
+        # หาค่าเบี่ยงเบน (ชั่วโมง) ระหว่างเวลาจาก HTML กับเวลาจาก JSON ของข่าวที่ตรงกัน
+        deltas = []
+        for it in items:
+            key = (it.country.strip().upper(), it.title.strip())
+            for jdt in lookup.get(key, []) or []:
+                # เปรียบเทียบเฉพาะรายการที่ตรงวันเดียวกันในเวลาไทย
+                if it.date_local.date() != jdt.astimezone(self.tz).date():
+                    continue
+                delta_hours = (it.date_utc - jdt).total_seconds() / 3600.0
+                deltas.append(round(delta_hours))
+                break
+
+        if not deltas:
+            logger.debug("ไม่มีรายการข่าวที่ตรงกับ JSON Feed สำหรับเทียบเวลา")
+            return items
+
+        # หาค่าเบี่ยงเบนที่พบบ่อยที่สุด
+        common_delta, common_count = Counter(deltas).most_common(1)[0]
+        match_ratio = common_count / len(deltas)
+
+        # ปลอดภัยเมื่อ: ส่วนใหญ่เห็นตรงกัน, เบี่ยงเบนไม่เกิน 14 ชม. (หลีกเลี่ยงผิดวันทั้งสัปดาห์)
+        if common_delta == 0 or abs(common_delta) > 14 or match_ratio < 0.6:
+            logger.debug(
+                f"เวลา HTML ตรงกับ JSON แล้วหรือไม่มั่นใจพอ (delta={common_delta}h, ratio={match_ratio:.0%})"
+            )
+            return items
+
+        logger.warning(
+            f"พบเวลา HTML บนหน้าเว็บคลาดเคลื่อนจากเวลาจริง {common_delta:+d} ชั่วโมง "
+            f"(เทียบ JSON Feed {match_ratio:.0%} รายการ) กำลังปรับเวลาให้ตรงทั้งหมด..."
+        )
+        shift = datetime.timedelta(hours=-common_delta)
+        for it in items:
+            it.date_utc = it.date_utc + shift
+            it.date_local = it.date_utc.astimezone(self.tz)
+        return items
 
     def _scrape_html_items(self) -> List[ForexNewsItem]:
         """
