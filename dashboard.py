@@ -589,7 +589,7 @@ with col_gauge:
 # 6. Interactive Candlestick + EMA Chart
 # ==========================================
 if df_rates is not None and len(df_rates) > 0:
-    with st.expander("📈 ดูกราฟแท่งเทียน Candlestick พร้อมเส้น EMA 50 / 150 แบบละเอียด", expanded=True):
+    with st.expander("📈 ดูกราฟแท่งเทียน Candlestick พร้อมเส้น EMA 50 / 150 แบบละเอียด", expanded=False):
         df_plot = indicator_service.calculate_ema(df_rates).tail(120)
 
         fig_chart = make_subplots(
