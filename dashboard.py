@@ -186,24 +186,26 @@ def format_actual_with_color(item: ForexNewsItem) -> str:
     - worse (สีแดง): ตัวเลขจริงแย่กว่าคาดการณ์
     - ปกติ: ไม่มีสีพิเศษ
     """
-    actual = item.actual or "รอดูผล"
-    if not item.actual:
+    actual = getattr(item, "actual", "") or "รอดูผล"
+    actual_color = getattr(item, "actual_color", "")
+    if not actual:
         return actual
-    if item.actual_color == "better":
+    if actual_color == "better":
         return f'<span style="color:#00aa00;font-weight:700;">{actual} ▲</span>'
-    elif item.actual_color == "worse":
+    elif actual_color == "worse":
         return f'<span style="color:#cc0000;font-weight:700;">{actual} ▼</span>'
     return actual
 
 
 def format_actual_text(item: ForexNewsItem) -> str:
     """จัดรูปแบบตัวเลขจริงสำหรับ st.dataframe (ไม่ใช้ HTML)"""
-    actual = item.actual or "รอดูผล"
-    if not item.actual:
+    actual = getattr(item, "actual", "") or "รอดูผล"
+    actual_color = getattr(item, "actual_color", "")
+    if not actual:
         return actual
-    if item.actual_color == "better":
+    if actual_color == "better":
         return f"🟢 {actual}"
-    elif item.actual_color == "worse":
+    elif actual_color == "worse":
         return f"🔴 {actual}"
     return actual
 
