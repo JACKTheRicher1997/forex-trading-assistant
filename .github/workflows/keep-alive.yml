@@ -1,0 +1,38 @@
+name: Keep Alive (Monthly Commit)
+
+on:
+  schedule:
+    # รันทุกวันที่ 1 ของเดือน 00:00 UTC เพื่อสร้าง commit รักษาสถานะ repo ให้ active
+    # (ทำให้ GitHub ไม่หยุด scheduled workflows หลัง repo เงียบเกิน 60 วัน)
+    - cron: "0 0 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: true
+
+      - name: Update keep-alive timestamp
+        run: |
+          echo "Last kept alive: $(date -u +'%Y-%m-%d %H:%M UTC')" > .github/keep-alive.md
+
+      - name: Commit & push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/keep-alive.md
+          if git diff --cached --quiet; then
+            echo "No changes - skipping commit"
+          else
+            git commit -m "chore: keep repository active"
+            git push
+          fi
