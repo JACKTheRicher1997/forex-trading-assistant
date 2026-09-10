@@ -108,6 +108,36 @@ class LineNotifier:
             logger.error(f"❌ เกิดข้อผิดพลาดขณะส่ง LINE Messaging API: {e}")
             return False
 
+    def _quota_footer(self) -> str:
+        """
+        สร้างส่วนท้ายข้อความแสดงจำนวนข้อความ LINE ที่ใช้ไปแล้ว / เหลือ / วันรีเซ็ต
+        ใช้ได้เฉพาะ LINE Messaging API ถ้าไม่ตั้งค่าหรือเรียกไม่ได้จะคืนค่าว่าง
+        """
+        try:
+            usage = self.get_consumption()
+            if usage is None:
+                return ""
+            used = int(usage.get("totalUsage", 0) or 0)
+            quota = self.get_quota()
+            if quota is None:
+                return ""
+            if quota.get("type") == "none":
+                return (
+                    "\n\n📊 สถานะข้อความ LINE\n"
+                    f"📨 ใช้ไปแล้ว: {used} ข้อความ (แผนนี้ไม่มีวงเงิน)"
+                )
+            total = int(quota.get("value", 0) or 0)
+            remaining = max(total - used, 0)
+            return (
+                "\n\n📊 สถานะข้อความ LINE (เดือนนี้)\n"
+                f"📨 ใช้ไปแล้ว: {used} / {total} ข้อความ\n"
+                f"✅ เหลือ: {remaining} ข้อความ\n"
+                f"🔄 รีเซ็ต: วันที่ 1 ของทุกเดือน"
+            )
+        except Exception as e:
+            logger.debug(f"ไม่สามารถแนบสรุปยอดโควต้าได้: {e}")
+            return ""
+
     def send(self, message: str) -> bool:
         """
         ส่งข้อความไปยัง LINE โดยจะพยายามส่งทั้ง LINE Messaging API และ LINE Notify ที่มี
@@ -116,14 +146,18 @@ class LineNotifier:
         """
         success = False
 
+        # ต่อท้ายส่วนสรุปยอดโควต้า (เฉพาะเมื่อตรวจได้)
+        footer = self._quota_footer()
+        full_message = message + footer if footer else message
+
         # 1. พยายามส่งผ่าน LINE Messaging API (หากมี Access Token & User ID)
         if self.channel_access_token and self.user_id:
-            if self.send_via_messaging_api(message):
+            if self.send_via_messaging_api(full_message):
                 success = True
 
         # 2. หากมี LINE Notify Token ให้ส่งด้วย
         if self.notify_token:
-            if self.send_via_line_notify(message):
+            if self.send_via_line_notify(full_message):
                 success = True
 
         if not success:
