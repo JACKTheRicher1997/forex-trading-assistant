@@ -367,6 +367,7 @@ with st.sidebar:
         "กรอบเวลา (Timeframe)",
         options=tf_options,
         index=tf_index,
+        key="select_tf",
     )
 
     st.markdown("---")
@@ -566,14 +567,34 @@ if signal_result:
                         tf_color = "#ef4444"
 
             with mtf_cols[idx]:
+                # กล่องสรุปเทรนแบบกดได้: คลิกเพื่อสลับเลือกกรอบเวลา (Timeframe) ใน sidebar
+                btn_label = f"{tf}\n{tf_trend}"
+                # เน้นไทม์เฟรมที่กำลังเลือกอยู่
+                is_active = (tf == selected_tf)
+                if st.button(
+                    btn_label,
+                    key=f"mtf_{tf}",
+                    use_container_width=True,
+                    type="primary" if is_active else "secondary",
+                ):
+                    st.session_state["select_tf"] = tf
+                    st.rerun()
+                # ระบายสีขอบล่างของปุ่มตามสถานะเทรนของแต่ละไทม์เฟรม
                 st.markdown(
                     f"""
-                    <div style="text-align: center; background: rgba(30, 41, 59, 0.5); padding: 8px; border-radius: 6px; border-bottom: 2px solid {tf_color};">
-                        <div style="font-size: 0.95rem; font-weight: bold; color: #f8fafc;">{tf}</div>
-                        <div style="font-size: 0.75rem; color: {tf_color}; font-weight: 600; margin-top: 2px;">{tf_trend}</div>
-                    </div>
+                    <style>
+                    .st-key-mtf_{tf} button {{
+                        border-bottom: 3px solid {tf_color} !important;
+                        text-align: center;
+                        font-weight: 600;
+                    }}
+                    .st-key-mtf_{tf} button:hover {{
+                        filter: brightness(1.25);
+                        border-color: {tf_color};
+                    }}
+                    </style>
                     """,
-                    unsafe_allow_html=True
+                    unsafe_allow_html=True,
                 )
 
     with col_gauge:
