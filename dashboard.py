@@ -629,11 +629,11 @@ st.caption("ระบบรวบรวมและกรองเฉพาะ�
 all_news_this_week = news_service.fetch_this_week_news(only_high_impact=False)
 red_news_this_week = [n for n in all_news_this_week if n.is_high_impact]
 
-# กรองสกุลเงิน (Global Filter)
+# กรองสกุลเงิน (Global Filter) - ค่าเริ่มต้นแสดงเฉพาะ USD
 currency_filter = st.multiselect(
     "กรองสกุลเงิน (Currency)",
     options=["ALL", "USD", "EUR", "GBP", "JPY", "CAD", "AUD", "NZD", "CHF"],
-    default=["ALL"],
+    default=["USD"],
 )
 
 if "ALL" not in currency_filter and currency_filter:
