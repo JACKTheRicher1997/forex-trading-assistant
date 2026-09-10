@@ -573,7 +573,7 @@ red_news_this_week = [n for n in all_news_this_week if n.is_high_impact]
 currency_filter = st.multiselect(
     "กรองสกุลเงิน (Currency)",
     options=["ALL", "USD", "EUR", "GBP", "JPY", "CAD", "AUD", "NZD", "CHF"],
-    default=["USD"],
+    default=["ALL"],
 )
 
 if "ALL" not in currency_filter and currency_filter:

@@ -433,9 +433,6 @@ class ForexFactoryNewsService:
         else:
             news_items = [n for n in news_items if n.is_high_impact]
 
-        # กรองเอาเฉพาะข่าวของ USD เท่านั้นสำหรับการแจ้งเตือน
-        news_items = [n for n in news_items if n.country == "USD"]
-
         business_days = self.get_week_business_days(reference_date)
         start_date_str = business_days[0].strftime("%d/%m/%Y")
         end_date_str = business_days[-1].strftime("%d/%m/%Y")
