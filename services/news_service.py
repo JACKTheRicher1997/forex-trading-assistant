@@ -11,6 +11,7 @@ ForexFactory News Service Module
 """
 
 import datetime
+import re
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Tuple
 import requests
@@ -106,7 +107,9 @@ class ForexFactoryNewsService:
         "icon--ff-impact-gra": "Holiday",
     }
 
-    # หน้า Calendar ของ ForexFactory แสดงเวลาใน Timezone ของ New York เสมอ
+    # หน้า Calendar ของ ForexFactory จะเรนเดอร์เวลาเป็น Timezone ของผู้เข้าชม (ไม่ใช่ NY เสมอไป)
+    # เช่น เปิดจากเครื่องในไทย -> เวลาจะเป็นเวลาไทย, เปิดจาก Server ฝั่ง US -> เวลา US
+    # ดังนั้นต้องตรวจสอบ Timezone จริงจากหน้าเว็บก่อนเสมอ (ดู _detect_render_timezone)
     _BROWSER_HEADERS = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -133,6 +136,27 @@ class ForexFactoryNewsService:
         if pytz:
             return pytz.timezone("America/New_York")
         return datetime.timezone(datetime.timedelta(hours=-4))
+
+    def _detect_render_timezone(self, html: str):
+        """
+        ตรวจสอบ Timezone ที่ ForexFactory ใช้เรนเดอร์เวลาในหน้า Calendar
+        (หน้าเว็บจะเรนเดอร์ตาม Timezone ของผู้เข้าชม เช่น Asia/Bangkok, America/New_York)
+        - ตรวจจาก Google Analytics user_properties ก่อน: 'timezone': 'Asia/Bangkok'
+        - ถ้าไม่เจอ ให้เช็คจากส่วนหัวตอนพิมพ์: "Calendar Time Zone: Asia/Bangkok (GMT +7)"
+        - ถ้าเจอ timezone ที่ไม่รู้จัก ให้ Fallback เป็น New York ตามพฤติกรรมเดิม
+        """
+        name = None
+        m = re.search(r"'timezone':\s*'([^']+)'", html)
+        if not m:
+            m = re.search(r"Calendar Time Zone:\s*([^<(]+?)\s*\(", html)
+        if m:
+            name = m.group(1).strip()
+            tz = self._init_timezone(name)
+            if tz is not None:
+                logger.debug(f"ตรวจพบ Timezone ของหน้า Calendar: {name}")
+                return tz
+        logger.warning(f"ไม่พบ Timezone ของหน้า Calendar (ค้นหาได้: {name!r}) ใช้ New York เป็นค่าเริ่มต้น")
+        return self._new_york_tz()
 
     def _init_timezone(self, tz_name: str):
         """กำหนด Timezone โดยรองรับ ZoneInfo, pytz หรือ Fallback เป็น GMT+7"""
@@ -277,7 +301,8 @@ class ForexFactoryNewsService:
         """แยกข้อมูลตารางข่าวจาก HTML หน้า ForexFactory Calendar"""
         soup = BeautifulSoup(html, "html.parser")
         items: List[ForexNewsItem] = []
-        ny_tz = self._new_york_tz()
+        # ForexFactory เรนเดอร์เวลาเป็น Timezone ของผู้เข้าชม -> ต้องตรวจสอบจากหน้าเว็บ
+        render_tz = self._detect_render_timezone(html)
         current_day_epoch: Optional[int] = None
         # เหตุการณ์ที่ออกพร้อมกัน (เช่น CPI m/m + CPI y/y) มักไม่มีเวลาในแถวรอง
         # ให้ใช้เวลาจากแถวก่อนหน้าที่เหลือในวันเดียวกัน
@@ -292,6 +317,7 @@ class ForexFactoryNewsService:
                 continue
 
             # วันที่ (Epoch) จะอยู่เฉพาะแถวแรกของแต่ละวัน (--new-day) แถวถัด ๆ ไปใช้ค่าวันเดิม
+            # Epoch นี้คือเที่ยงคืนของวันนั้นใน Timezone ที่ ForexFactory เรนเดอร์ (ตัวเดียวกับ time string)
             epoch_str = tr.get("data-day-dateline")
             if epoch_str:
                 try:
@@ -302,7 +328,7 @@ class ForexFactoryNewsService:
                 continue
 
             try:
-                day_ts = datetime.datetime.fromtimestamp(current_day_epoch, tz=ny_tz)
+                day_ts = datetime.datetime.fromtimestamp(current_day_epoch, tz=render_tz)
             except (OSError, ValueError, OverflowError):
                 continue
 
@@ -429,10 +455,15 @@ class ForexFactoryNewsService:
         """
         กรองข่าวตามสกุลเงินที่ตั้งค่าไว้ใน LINE (WEEKLY_ALERT_CURRENCIES)
         เช่น "USD" -> เฉพาะข่าว USD, "USD,EUR" -> USD + EUR
+        - ค่าว่าง/ไม่ตั้งค่า -> ใช้ค่าเริ่มต้นเป็น USD
+        - ตั้ง "ALL" -> ส่งทุกสกุลเงิน
         """
-        raw = getattr(config.news, "weekly_alert_currencies", "USD")
+        raw = (getattr(config.news, "weekly_alert_currencies", "") or "").strip()
         currencies = [c.strip().upper() for c in raw.split(",") if c.strip()]
-        if not currencies or "ALL" in currencies:
+        if not currencies:
+            currencies = ["USD"]
+        logger.info(f"สกุลเงินที่ตั้งค่าไว้ (WEEKLY_ALERT_CURRENCIES): {currencies}")
+        if "ALL" in currencies:
             return news_items
         filtered = [n for n in news_items if n.country.upper() in currencies]
         logger.info(
@@ -486,6 +517,10 @@ class ForexFactoryNewsService:
         # กรองเฉพาะสกุลเงินที่ตั้งค่าไว้ใน LINE (ค่า default: USD)
         news_items = self._filter_alert_currencies(news_items)
 
+        # สกุลเงินที่ใช้กรอง (แสดงไว้บนหัวข้อความ เพื่อให้เห็นชัดเจนว่าส่งเฉพาะสกุลไหน)
+        raw_cfg = (getattr(config.news, "weekly_alert_currencies", "") or "").strip()
+        filter_currencies = [c.strip().upper() for c in raw_cfg.split(",") if c.strip()] or ["USD"]
+
         business_days = self.get_week_business_days(reference_date)
         start_date_str = business_days[0].strftime("%d/%m/%Y")
         end_date_str = business_days[-1].strftime("%d/%m/%Y")
@@ -505,9 +540,13 @@ class ForexFactoryNewsService:
         lines = [
             "🔴 [ForexFactory] สรุปข่าวแดงประจำสัปดาห์ 🔴",
             f"📅 ประจำวันที่: {start_date_str} - {end_date_str}",
-            f"⚠️ จำนวนข่าวสีแดง (High-Impact) ทั้งหมด: {total_high_impact} ข่าว",
-            "=" * 28,
         ]
+        if "ALL" not in filter_currencies:
+            lines.append(f"💱 สกุลเงินที่ติดตาม: {', '.join(filter_currencies)}")
+        lines.append(
+            f"⚠️ จำนวนข่าวสีแดง (High-Impact) ทั้งหมด: {total_high_impact} ข่าว"
+        )
+        lines.append("=" * 28)
 
         for day in business_days:
             day_key = day.strftime("%Y-%m-%d")
