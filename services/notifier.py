@@ -24,6 +24,8 @@ class LineNotifier:
 
     LINE_NOTIFY_API_URL = "https://notify-api.line.me/api/notify"
     LINE_PUSH_API_URL = "https://api.line.me/v2/bot/message/push"
+    LINE_QUOTA_URL = "https://api.line.me/v2/bot/message/quota"
+    LINE_QUOTA_CONSUMPTION_URL = "https://api.line.me/v2/bot/message/quota/consumption"
 
     def __init__(
         self,
@@ -129,6 +131,48 @@ class LineNotifier:
 
         return success
 
+    def get_quota(self) -> Optional[Dict[str, Any]]:
+        """
+        ดึงวงเงิน (Target Limit) การส่งข้อความประจำเดือนของ LINE Messaging API
+        :return: {"type": "limited", "value": 200} หรือ {"type": "none"} (ไม่มีวงเงิน) หรือ None
+        """
+        if not self.channel_access_token:
+            logger.debug("ไม่ได้ตั้งค่า LINE_CHANNEL_ACCESS_TOKEN ข้ามการตรวจโควต้า")
+            return None
+        try:
+            headers = {"Authorization": f"Bearer {self.channel_access_token}"}
+            resp = requests.get(self.LINE_QUOTA_URL, headers=headers, timeout=10)
+            if resp.status_code != 200:
+                logger.error(f"ดึงโควต้าไม่สำเร็จ HTTP {resp.status_code}: {resp.text}")
+                return None
+            data = resp.json()
+            logger.info(f"โควต้า LINE API: {data}")
+            return data
+        except Exception as e:
+            logger.error(f"เกิดข้อผิดพลาดการดึงโควต้า: {e}")
+            return None
+
+    def get_consumption(self) -> Optional[Dict[str, Any]]:
+        """
+        ดึงจำนวนข้อความที่ส่งไปแล้วในเดือนนี้ (ใช้ผ่าน LINE Messaging API)
+        :return: {"totalUsage": 5} หรือ None
+        """
+        if not self.channel_access_token:
+            logger.debug("ไม่ได้ตั้งค่า LINE_CHANNEL_ACCESS_TOKEN ข้ามการตรวจการใช้ข้อความ")
+            return None
+        try:
+            headers = {"Authorization": f"Bearer {self.channel_access_token}"}
+            resp = requests.get(self.LINE_QUOTA_CONSUMPTION_URL, headers=headers, timeout=10)
+            if resp.status_code != 200:
+                logger.error(f"ดึงยอดใช้ข้อความไม่สำเร็จ HTTP {resp.status_code}: {resp.text}")
+                return None
+            data = resp.json()
+            logger.info(f"ยอดใช้ข้อความ LINE API เดือนนี้: {data}")
+            return data
+        except Exception as e:
+            logger.error(f"เกิดข้อผิดพลาดการดึงยอดใช้ข้อความ: {e}")
+            return None
+
 
 class NotificationService:
     """
@@ -156,3 +200,27 @@ class NotificationService:
             "สถานะ: ระบบทำงานปกติ พร้อมส่งสัญญาณ Live Cross และข่าวเศรษฐกิจครับ 🚀"
         )
         return self.notifier.send(test_msg)
+
+    def get_message_usage_summary(self) -> Optional[Dict[str, Any]]:
+        """
+        สรุปการใช้งานข้อความ LINE API ประจำเดือน (เฉพาะ LINE Messaging API)
+        :return: dict เช่น {"type": "limited", "total": 200, "used": 5, "remaining": 195}
+                 หรือ {"type": "none", "usage": 5} (แผนไม่มีวงเงิน)
+                 หรือ None (ไม่มี Messaging API / เรียกไม่สำเร็จ)
+        """
+        quota = self.notifier.get_quota()
+        usage = self.notifier.get_consumption()
+        if quota is None or usage is None:
+            return None
+
+        used = int(usage.get("totalUsage", 0) or 0)
+        if quota.get("type") == "none":
+            return {"type": "none", "used": used}
+
+        total = int(quota.get("value", 0) or 0)
+        return {
+            "type": "limited",
+            "total": total,
+            "used": used,
+            "remaining": max(total - used, 0),
+        }

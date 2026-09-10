@@ -169,6 +169,7 @@ def parse_arguments():
     parser.add_argument("--test-line", action="store_true", help="ทดสอบส่งข้อความเข้า LINE ทันที")
     parser.add_argument("--send-news-now", action="store_true", help="ดึงและส่งสรุปข่าวแดงประจำสัปดาห์เข้า LINE ทันที")
     parser.add_argument("--check-ema-now", action="store_true", help="ตรวจสอบสถานะ EMA 50/150 และแสดงผลทันที")
+    parser.add_argument("--check-quota", action="store_true", help="ตรวจสอบโควต้าข้อความ LINE API ที่ใช้ไป/เหลือในเดือนนี้")
     return parser.parse_args()
 
 
@@ -195,6 +196,27 @@ def main():
         assistant.initialize()
         assistant.check_live_ema_cross()
         assistant.price_service.shutdown()
+        return
+
+    # โหมดตรวจสอบโควต้าข้อความ LINE API
+    if args.check_quota:
+        logger.info("--- โหมดตรวจสอบโควต้าข้อความ LINE API ---")
+        summary = assistant.notifier.get_message_usage_summary()
+        if summary is None:
+            logger.warning(
+                "⚠️ ไม่สามารถตรวจโควต้าได้ ต้องตั้งค่า LINE_CHANNEL_ACCESS_TOKEN + LINE_USER_ID (LINE Messaging API)"
+            )
+            return
+        print("=" * 40)
+        if summary["type"] == "none":
+            print("📊 แผนนี้ไม่มีวงเงินโควต้า (Free / ไม่จำกัด)")
+            print(f"📨 ใช้ข้อความไปแล้วในเดือนนี้: {summary['used']} ข้อความ")
+        else:
+            print(f"📊 วงเงินข้อความในเดือนนี้: {summary['total']} ข้อความ")
+            print(f"📨 ใช้ไปแล้ว: {summary['used']} ข้อความ")
+            print(f"✅ เหลือ: {summary['remaining']} ข้อความ")
+        print("🔄 โควต้าจะรีเซ็ตใหม่ทุกวันที่ 1 ของเดือน (เวลา 00:00 JST = 22:00-23:00 น. เวลาไทย)")
+        print("=" * 40)
         return
 
     # รันโหมดปกติ (Continuous Background Bot)
