@@ -114,7 +114,7 @@ st.markdown(
         color: #94a3b8;
         font-weight: 700;
         font-size: 0.9rem;
-        text-align: left;
+        text-align: center;
         padding: 10px 12px;
         white-space: nowrap;
         border-bottom: 2px solid rgba(255, 255, 255, 0.1);
@@ -269,21 +269,19 @@ def render_html_table(rows: list, colors: list, actual_col: str) -> str:
     if not rows:
         return ""
     columns = list(rows[0].keys())
-    right_align_hint = ("actual", "forecast", "previous", "เวลา", "นับถอย")
     thead = "".join(f"<th>{c}</th>" for c in columns)
     tbody = ""
     for i, row in enumerate(rows):
         cells = ""
         for c in columns:
             val = row[c]
-            align = "right" if any(h in str(c).lower() for h in right_align_hint) else "left"
             if c == actual_col and colors and i < len(colors) and colors[i]:
                 cells += (
-                    f'<td style="color:{colors[i]};font-weight:700;text-align:{align};'
+                    f'<td style="color:{colors[i]};font-weight:700;text-align:center;'
                     f'white-space:nowrap;">{val}</td>'
                 )
             else:
-                cells += f"<td style=\"text-align:{align};\">{val}</td>"
+                cells += '<td style="text-align:center;">' + str(val) + "</td>"
         tbody += f"<tr>{cells}</tr>"
     return (
         '<div class="news-table-wrap">'
