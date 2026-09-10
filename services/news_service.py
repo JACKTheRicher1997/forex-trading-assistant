@@ -268,6 +268,10 @@ class ForexFactoryNewsService:
         items: List[ForexNewsItem] = []
         ny_tz = self._new_york_tz()
         current_day_epoch: Optional[int] = None
+        # เหตุการณ์ที่ออกพร้อมกัน (เช่น CPI m/m + CPI y/y) มักไม่มีเวลาในแถวรอง
+        # ให้ใช้เวลาจากแถวก่อนหน้าที่เหลือในวันเดียวกัน
+        last_hour: Optional[int] = None
+        last_minute: int = 0
 
         for tr in soup.select("tr.calendar__row"):
             classes = tr.get("class", []) or []
@@ -293,8 +297,12 @@ class ForexFactoryNewsService:
 
             time_str = self._extract_text(tr, ".calendar__time")
             hour, minute = self._parse_ff_time(time_str)
-            if hour is None:
-                continue
+            if hour is not None:
+                last_hour, last_minute = hour, minute
+            else:
+                hour, minute = last_hour, last_minute
+                if hour is None:
+                    continue
 
             utc_dt = day_ts.replace(hour=hour, minute=minute, second=0, microsecond=0)
             utc_dt = utc_dt.astimezone(datetime.timezone.utc)
