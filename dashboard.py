@@ -23,6 +23,32 @@ from services.notifier import NotificationService
 
 logger = get_logger("Dashboard")
 
+
+def _st_secret(key: str, default: str = ""):
+    """
+    อ่านค่า Streamlit Secrets อย่างปลอดภัยทุกเวอร์ชัน (ไม่โยน exception)
+    รองรับทั้ง st.secrets ที่เป็น dict (.get / []) และเวอร์ชันที่ยังไม่มี runtime
+    """
+    try:
+        import streamlit as st
+
+        secs = getattr(st, "secrets", None)
+        if secs is not None:
+            try:
+                value = secs.get(key, default)
+            except Exception:
+                value = None
+            if value is None:
+                try:
+                    value = secs[key]
+                except Exception:
+                    return default
+            if value is not None and str(value).strip():
+                return value
+    except Exception:
+        pass
+    return default
+
 # ==========================================
 # 1. Page Configuration & Custom Dark CSS
 # ==========================================
@@ -317,11 +343,11 @@ with st.sidebar:
     st.caption("ระบบวิเคราะห์ EMA Cross & แจ้งเตือนข่าวแดง ForexFactory")
     st.markdown("---")
 
-    # ดึงค่าเริ่มต้นคู่เงิน ไทม์เฟรม และ EMA จาก Streamlit Secrets
-    default_symbol = st.secrets.get("SYMBOL", "XAUUSDm")
-    default_tf = st.secrets.get("TIMEFRAME", "M5")
-    default_ema_fast = int(st.secrets.get("EMA_FAST", 50))
-    default_ema_slow = int(st.secrets.get("EMA_SLOW", 150))
+    # ดึงค่าเริ่มต้นคู่เงิน ไทม์เฟรม และ EMA จาก Streamlit Secrets (ปลอดภัยทุกเวอร์ชัน)
+    default_symbol = str(_st_secret("SYMBOL", "XAUUSDm"))
+    default_tf = str(_st_secret("TIMEFRAME", "M5"))
+    default_ema_fast = int(_st_secret("EMA_FAST", 50))
+    default_ema_slow = int(_st_secret("EMA_SLOW", 150))
 
     # ตัวเลือกตั้งค่า Symbol & Timeframe (กำหนดให้ดึงค่าเริ่มต้นจาก Secrets)
     selected_symbol = st.selectbox(
@@ -358,14 +384,9 @@ with st.sidebar:
     st.markdown("### 📲 ทดสอบการแจ้งเตือน LINE")
 
     # ดึงค่าจากหน้า Streamlit Secrets มาใช้งานโดยตรงแทนระบบ config เดิม
-    try:
-        channel_access_token = st.secrets["LINE_CHANNEL_ACCESS_TOKEN"]
-        user_id = st.secrets["LINE_USER_ID"]
-        has_token = bool(channel_access_token and user_id)
-    except Exception:
-        has_token = False
-        channel_access_token = None
-        user_id = None
+    channel_access_token = str(_st_secret("LINE_CHANNEL_ACCESS_TOKEN", ""))
+    user_id = str(_st_secret("LINE_USER_ID", ""))
+    has_token = bool(channel_access_token and user_id)
 
     st.caption(
         f"สถานะ LINE Config: "

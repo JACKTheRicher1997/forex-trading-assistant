@@ -18,14 +18,28 @@ def _get_secret(key: str, default: str = "") -> str:
     """
     อ่านค่าจาก Streamlit Secrets (สำหรับ Streamlit Cloud) หรือ Environment Variables
     ลำดับการค้นหา: 1) Streamlit Secrets  2) os.environ  3) default
+
+    ออกแบบให้ปลอดภัยกับ Streamlit ทุกเวอร์ชัน:
+    - บางเวอร์ชัน st.secrets เป็น dict รองรับ .get() / [] ทั้งคู่
+    - บางเวอร์ชันไม่มี .get() หรือเข้าถึงแล้วโยน exception ตอนยังไม่มี runtime
+    ทำ try/except ทุกทาง เพื่อไม่ให้การ import config หน้าเว็บพลาดได้
     """
-    # พยายาม import streamlit เฉพาะเมื่อมี (เพื่อให้ยังรันเป็น Bot ได้โดยไม่ต้องมี streamlit)
     try:
         import streamlit as st
 
-        value = st.secrets.get(key)
-        if value is not None and str(value).strip() and str(value) not in ("your_channel_access_token", "your_user_id"):
-            return str(value)
+        secs = getattr(st, "secrets", None)
+        if secs is not None:
+            try:
+                value = secs.get(key, None)
+            except Exception:
+                value = None
+            if value is None:
+                try:
+                    value = secs[key]
+                except Exception:
+                    value = None
+            if value is not None and str(value).strip() and str(value) not in ("your_channel_access_token", "your_user_id"):
+                return str(value)
     except Exception:
         pass
 
