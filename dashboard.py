@@ -446,52 +446,53 @@ if df_rates is not None and len(df_rates) > 0:
     signal_result = indicator_service.analyze(df_rates, symbol=selected_symbol, timeframe=selected_tf)
 
 # ==========================================
-# 5. Section 1: สถานะอินดิเคเตอร์ & เกจวัด EMA
+# 5. Section 1: สถานะอินดิเคเตอร์ & เกจวัด EMA (Responsive Layout)
 # ==========================================
 st.markdown("## 📊 1. สถานะอินดิเคเตอร์ & การตัดกันของ EMA (EMA Cross)")
 
-col_status, col_gauge = st.columns([3, 2])
+if signal_result:
+    # Banner แสดงเทรนแบบเต็มความกว้างหน้าจอ
+    if signal_result.is_bullish:
+        st.markdown(
+            """
+            <div class="trend-bullish">
+                <h2 style="color: #10b981; margin:0; font-size: 1.8rem;">🟢 CURRENT TREND: BULLISH</h2>
+                <p style="margin: 5px 0 0 0; color: #a7f3d0; font-size: 1.1rem; font-weight: 500;">
+                    EMA 50 อยู่เหนือ EMA 150 (โมเมนตัมขาขึ้น)
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    elif signal_result.is_bearish:
+        st.markdown(
+            """
+            <div class="trend-bearish">
+                <h2 style="color: #ef4444; margin:0; font-size: 1.8rem;">🔴 CURRENT TREND: BEARISH</h2>
+                <p style="margin: 5px 0 0 0; color: #fecaca; font-size: 1.1rem; font-weight: 500;">
+                    EMA 50 อยู่ใต้ EMA 150 (โมเมนตัมขาลง)
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            """
+            <div class="trend-neutral">
+                <h2 style="color: #94a3b8; margin:0; font-size: 1.8rem;">⚪ CURRENT TREND: NEUTRAL</h2>
+                <p style="margin: 5px 0 0 0;">เส้น EMA กำลังเกาะกลุ่มกัน</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-with col_status:
-    if signal_result:
-        # แสดง Banner สถานะใหญ่สะดุดตาตามข้อกำหนด
-        if signal_result.is_bullish:
-            st.markdown(
-                """
-                <div class="trend-bullish">
-                    <h2 style="color: #10b981; margin:0; font-size: 1.8rem;">🟢 CURRENT TREND: BULLISH</h2>
-                    <p style="margin: 5px 0 0 0; color: #a7f3d0; font-size: 1.1rem; font-weight: 500;">
-                        EMA 50 อยู่เหนือ EMA 150 (โมเมนตัมขาขึ้น)
-                    </p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        elif signal_result.is_bearish:
-            st.markdown(
-                """
-                <div class="trend-bearish">
-                    <h2 style="color: #ef4444; margin:0; font-size: 1.8rem;">🔴 CURRENT TREND: BEARISH</h2>
-                    <p style="margin: 5px 0 0 0; color: #fecaca; font-size: 1.1rem; font-weight: 500;">
-                        EMA 50 อยู่ใต้ EMA 150 (โมเมนตัมขาลง)
-                    </p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(
-                """
-                <div class="trend-neutral">
-                    <h2 style="color: #94a3b8; margin:0; font-size: 1.8rem;">⚪ CURRENT TREND: NEUTRAL</h2>
-                    <p style="margin: 5px 0 0 0;">เส้น EMA กำลังเกาะกลุ่มกัน</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+    st.markdown("<br>", unsafe_allow_html=True)
 
-        st.markdown("<br>", unsafe_allow_html=True)
+    # แบ่งหน้าจอเป็น 2 ฝั่ง: ซ้าย (ตัวเลข 4 ช่อง + MTF) | ขวา (หน้าปัด Gauge)
+    col_metrics, col_gauge = st.columns([6, 4])
 
+    with col_metrics:
         # ข้อมูล Metric ตัวเลขหลัก 4 ช่อง
         m1, m2, m3, m4 = st.columns(4)
         with m1:
@@ -522,15 +523,17 @@ with col_status:
             )
 
         st.markdown("<br>", unsafe_allow_html=True)
+
+        # สรุปเทรน Multi-Timeframe (MTF) ภายในคอลัมน์ซ้าย
         st.markdown("#### 🧭 สรุปเทรน Multi-Timeframe (MTF)")
         mtf_tfs = ["M5", "M15", "H1", "H4", "D1"]
         mtf_cols = st.columns(len(mtf_tfs))
-        
+
         for idx, tf in enumerate(mtf_tfs):
             tf_df = drop_last_open_candle(cached_rates(selected_symbol, tf, 160))
             tf_trend = "NEUTRAL"
             tf_color = "#94a3b8"
-            
+
             if tf_df is not None and len(tf_df) > 0:
                 tf_res = indicator_service.analyze(tf_df, symbol=selected_symbol, timeframe=tf)
                 if tf_res:
@@ -540,7 +543,7 @@ with col_status:
                     elif tf_res.is_bearish:
                         tf_trend = "BEARISH 🔴"
                         tf_color = "#ef4444"
-            
+
             with mtf_cols[idx]:
                 st.markdown(
                     f"""
@@ -551,30 +554,25 @@ with col_status:
                     """,
                     unsafe_allow_html=True
                 )
-    else:
-        st.warning(
-            "⚠️ ไม่สามารถดึงข้อมูลราคาได้ในขณะนี้ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตหรือลองใหม่ภายหลัง"
-        )
 
-with col_gauge:
-    # เกจวัดสวยๆ ด้วย Plotly Gauge Indicator
-    if signal_result:
+    with col_gauge:
+        # หน้าปัดวัดระยะห่าง EMA แบบยืดหยุ่น (Responsive)
         spread_ema = signal_result.ema_fast - signal_result.ema_slow
         max_range = max(abs(spread_ema) * 2, 10.0)
-
         gauge_color = "#10b981" if signal_result.is_bullish else "#ef4444"
+
         fig_gauge = go.Figure(
             go.Indicator(
-                mode="gauge+number+delta",
+                mode="gauge+number",
                 value=spread_ema,
                 domain={"x": [0, 1], "y": [0, 1]},
-                delta={"reference": 0, "increasing": {"color": "#10b981"}, "decreasing": {"color": "#ef4444"}},
+                number={"font": {"color": "#f8fafc", "size": 36}, "valueformat": ".1f"},
                 gauge={
-                    "axis": {"range": [-max_range, max_range], "tickcolor": "#64748b"},
+                    "axis": {"range": [-max_range, max_range], "tickwidth": 1, "tickcolor": "#94a3b8"},
                     "bar": {"color": gauge_color},
-                    "bgcolor": "rgba(15, 23, 42, 0.6)",
+                    "bgcolor": "rgba(30, 41, 59, 0.5)",
                     "borderwidth": 1,
-                    "bordercolor": "#334155",
+                    "bordercolor": "rgba(255,255,255,0.1)",
                     "steps": [
                         {"range": [-max_range, 0], "color": "rgba(239, 68, 68, 0.15)"},
                         {"range": [0, max_range], "color": "rgba(16, 185, 129, 0.15)"},
@@ -582,20 +580,21 @@ with col_gauge:
                     "threshold": {
                         "line": {"color": "#f59e0b", "width": 3},
                         "thickness": 0.75,
-                        "value": 0,
+                        "value": spread_ema,
                     },
                 },
             )
         )
         fig_gauge.update_layout(
             autosize=True,
-            height=270,
-            margin=dict(l=20, r=20, t=75, b=20),
+            height=220,
+            margin=dict(l=10, r=10, t=40, b=10),
             title=dict(text="📏 EMA Distance (EMA50 - EMA150)", x=0.5, xanchor="center", font=dict(size=14, color="#cbd5e1")),
             paper_bgcolor="rgba(0,0,0,0)",
             font={"color": "#e2e8f0"},
         )
-        st.plotly_chart(fig_gauge, use_container_width=True)
+        st.plotly_chart(fig_gauge, use_container_width=True, config={"displayModeBar": False})
+
         st.markdown(
             """
             <div style="background-color: rgba(56, 189, 248, 0.1); border-left: 4px solid #38bdf8; padding: 10px 15px; border-radius: 4px; font-size: 0.9rem; color: #cbd5e1; margin-top: -10px;">
@@ -608,6 +607,10 @@ with col_gauge:
             """,
             unsafe_allow_html=True
         )
+else:
+    st.warning(
+        "⚠️ ไม่สามารถดึงข้อมูลราคาได้ในขณะนี้ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตหรือลองใหม่ภายหลัง"
+    )
 
 
 # ==========================================
