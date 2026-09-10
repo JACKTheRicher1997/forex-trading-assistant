@@ -622,7 +622,7 @@ with tab_weekly:
                     "สกุลเงิน": n.country,
                     "ชื่อข่าวเศรษฐกิจ": n.title,
                     "ตัวเลขคาดการณ์ (Forecast)": n.forecast or "-",
-                    "ตัวเลขจริง (Actual)": getattr(n, "actual", "") or "รอดูผล",
+                    "ตัวเลขจริง (Actual)": n.actual or "รอดูผล",
                     "ตัวเลขเดิม (Previous)": n.previous or "-",
                 }
             )
@@ -705,7 +705,7 @@ with tab_daily:
                     "สกุลเงิน": item.country,
                     "ชื่อข่าว": item.title,
                     "Forecast": item.forecast or "-",
-                    "Actual": getattr(item, "actual", "") or "รอดูผล",
+                    "Actual": item.actual or "รอดูผล",
                     "Previous": item.previous or "-",
                 }
             )
@@ -746,7 +746,7 @@ with tab_calendar:
                     "สกุลเงิน": n.country,
                     "ชื่อข่าว": n.title,
                     "Forecast": n.forecast or "-",
-                    "Actual": getattr(n, "actual", "") or "รอดูผล",
+                    "Actual": n.actual or "รอดูผล",
                     "Previous": n.previous or "-",
                     "Impact": "🔴 High",
                 }

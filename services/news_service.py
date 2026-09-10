@@ -2,11 +2,17 @@
 ForexFactory News Service Module
 ดึงข้อมูลตารางข่าวเศรษฐกิจจาก ForexFactory กรองเฉพาะข่าวสีแดง (High-Impact)
 และจัดรูปแบบข้อความแจ้งเตือนสรุปรายสัปดาห์
+
+แหล่งข้อมูล:
+1. หน้า Calendar ของเว็บ ForexFactory (https://www.forexfactory.com/calendar)
+   - ให้ค่าที่แท้จริงครบ: Actual / Forecast / Previous
+2. JSON Feed (https://nfs.faireconomy.media/ff_calendar_thisweek.json)
+   - ใช้เป็น Fallback เมื่อ scrape เว็บไม่ได้ (feed นี้ไม่มีค่า Actual)
 """
 
 import datetime
 from dataclasses import dataclass
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 import requests
 
 try:
@@ -18,6 +24,11 @@ try:
     import pytz
 except ImportError:
     pytz = None
+
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    BeautifulSoup = None
 
 from logger import get_logger
 from config import config
@@ -73,11 +84,44 @@ class ForexFactoryNewsService:
     THIS_WEEK_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
     NEXT_WEEK_URL = "https://nfs.faireconomy.media/ff_calendar_nextweek.json"
 
+    # หน้า Calendar อย่างเป็นทางการของเว็บ ForexFactory (มีค่า Actual/Forecast/Previous จริง)
+    CALENDAR_URL = "https://www.forexfactory.com/calendar"
+
+    # แปลง CSS Class ของ Icon ระดับความสำคัญ (Impact) บนหน้าเว็บ
+    _IMPACT_MAP = {
+        "icon--ff-impact-red": "High",
+        "icon--ff-impact-ora": "Medium",
+        "icon--ff-impact-yel": "Low",
+        "icon--ff-impact-gra": "Holiday",
+    }
+
+    # หน้า Calendar ของ ForexFactory แสดงเวลาใน Timezone ของ New York เสมอ
+    _BROWSER_HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/126.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+
     def __init__(self, target_timezone: str = None):
         self.timezone_name = target_timezone or config.news.timezone
         self.tz = self._init_timezone(self.timezone_name)
         self._cached_news: List[ForexNewsItem] = []
         self._last_fetched: Optional[datetime.datetime] = None
+
+    def _new_york_tz(self):
+        """Timezone ของ ForexFactory Calendar (America/New_York)"""
+        if ZoneInfo:
+            try:
+                return ZoneInfo("America/New_York")
+            except Exception:
+                pass
+        if pytz:
+            return pytz.timezone("America/New_York")
+        return datetime.timezone(datetime.timedelta(hours=-4))
 
     def _init_timezone(self, tz_name: str):
         """กำหนด Timezone โดยรองรับ ZoneInfo, pytz หรือ Fallback เป็น GMT+7"""
@@ -97,28 +141,44 @@ class ForexFactoryNewsService:
     def fetch_this_week_news(self, force_refresh: bool = False, only_high_impact: bool = True) -> List[ForexNewsItem]:
         """
         ดึงข้อมูลข่าวประจำสัปดาห์นี้จาก ForexFactory
+        ลำดับข้อมูล: scrape หน้า Calendar ของเว็บก่อน (มีค่า Actual) -> ใช้ JSON Feed เป็น Fallback
         :param force_refresh: บังคับดึงข้อมูลใหม่โดยไม่ใช้แคช
         :param only_high_impact: กรองเอาเฉพาะข่าวสีแดง (High Impact) เท่านั้น
         :return: รายการ ForexNewsItem
         """
         now = datetime.datetime.now(self.tz)
-        # ใช้แคชถ้าเพิ่งดึงไปไม่เกิน 15 นาที
+        # ใช้แคชถ้าเพิ่งดึงไปไม่เกิน 5 นาที
         if not force_refresh and self._cached_news and self._last_fetched:
-            if (now - self._last_fetched).total_seconds() < 900:
+            if (now - self._last_fetched).total_seconds() < 300:
                 logger.debug("ใช้ข้อมูลข่าวจากหน่วยความจำแคช")
                 return [n for n in self._cached_news if not only_high_impact or n.is_high_impact]
 
         logger.info("กำลังดึงข้อมูลข่าวเศรษฐกิจสัปดาห์นี้จาก ForexFactory...")
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "Accept": "application/json",
-        }
 
+        # 1) ลอง scrape หน้า Calendar ของเว็บก่อน เพราะมีค่า Actual/Forecast/Previous จริง
+        html_items = self._scrape_html_items()
+        if html_items:
+            self._cached_news = html_items
+            self._last_fetched = now
+            logger.info(f"ดึงข่าวจากหน้า Calendar ของเว็บ ForexFactory สำเร็จ: พบจำนวน {len(html_items)} รายการ")
+        else:
+            # 2) Fallback เป็น JSON Feed (feed นี้จะไม่มีค่า Actual)
+            self._fetch_from_json_feed(now)
+
+        if only_high_impact:
+            filtered = [item for item in self._cached_news if item.is_high_impact]
+            logger.info(f"กรองเฉพาะข่าวสีแดง (High-Impact): พบจำนวน {len(filtered)} รายการ")
+            return filtered
+
+        return self._cached_news
+
+    def _fetch_from_json_feed(self, now: datetime.datetime) -> bool:
+        """ดึงข้อมูลจาก JSON Feed ของ Fair Economy (ไม่มีค่า Actual ใช้เป็น Fallback)"""
         try:
+            headers = {
+                "User-Agent": self._BROWSER_HEADERS["User-Agent"],
+                "Accept": "application/json",
+            }
             response = requests.get(self.THIS_WEEK_URL, headers=headers, timeout=12)
             response.raise_for_status()
             data = response.json()
@@ -134,35 +194,175 @@ class ForexFactoryNewsService:
                 # แปลงเวลาเป็น Local Timezone (เช่น Asia/Bangkok)
                 local_dt = dt_obj.astimezone(self.tz)
 
-                news_item = ForexNewsItem(
-                    title=item.get("title", "Unknown"),
-                    country=item.get("country", ""),
-                    date_utc=dt_obj,
-                    date_local=local_dt,
-                    impact=item.get("impact", "Low"),
-                    forecast=item.get("forecast", ""),
-                    previous=item.get("previous", ""),
-                    actual=item.get("actual", ""),
+                parsed_items.append(
+                    ForexNewsItem(
+                        title=item.get("title", "Unknown"),
+                        country=item.get("country", ""),
+                        date_utc=dt_obj,
+                        date_local=local_dt,
+                        impact=item.get("impact", "Low"),
+                        forecast=item.get("forecast", ""),
+                        previous=item.get("previous", ""),
+                        actual=item.get("actual", ""),
+                    )
                 )
-                parsed_items.append(news_item)
+
+            if not parsed_items:
+                logger.warning("JSON Feed กลับมารายการว่าง ไม่มีข้อมูล")
+                return False
 
             self._cached_news = parsed_items
             self._last_fetched = now
-            logger.info(f"ดึงข้อมูลข่าวสำเร็จ: พบข่าวทั้งหมด {len(parsed_items)} รายการ")
+            logger.info(f"ดึงข้อมูลข่าวจาก JSON Feed สำเร็จ: พบข่าวทั้งหมด {len(parsed_items)} รายการ")
+            return True
 
         except Exception as e:
             logger.error(f"เกิดข้อผิดพลาดในการดึงข่าวจาก ForexFactory: {e}", exc_info=True)
-            # ถ้าดึงไม่สำเร็จและไม่มีแคชเดิม ให้คืนค่าแคชที่มีหรือข้อมูลสำรอง
-            if not self._cached_news:
-                logger.warning("ไม่มีข้อมูลข่าวในแคช ใช้รายการว่าง")
-                return []
+            return False
 
-        if only_high_impact:
-            filtered = [item for item in self._cached_news if item.is_high_impact]
-            logger.info(f"กรองเฉพาะข่าวสีแดง (High-Impact): พบ {len(filtered)} รายการ")
-            return filtered
+    def _scrape_html_items(self) -> List[ForexNewsItem]:
+        """
+        ดึงข้อมูลจากหน้า Calendar ของเว็บ ForexFactory โดยตรง
+        จุดประสงค์หลัก: ให้ได้ค่า Actual/Previous จริงที่ JSON Feed ไม่มี
+        """
+        if BeautifulSoup is None:
+            logger.warning("ไม่พบไลบรารี beautifulsoup4 ใช้ข้อมูลจาก JSON Feed แทน")
+            return []
 
-        return self._cached_news
+        resp = None
+        try:
+            r = requests.get(self.CALENDAR_URL, headers=self._BROWSER_HEADERS, timeout=15)
+            # หน้า Calendar จริงมีขนาดใหญ่ (~400KB) ส่วนหน้า Block/Challenge มักเล็กกว่า 50KB
+            if r.ok and len(r.text) > 50000:
+                resp = r
+        except Exception as e:
+            logger.debug(f"ดึงหน้า Calendar ด้วย requests ไม่สำเร็จ: {e!r}")
+
+        if resp is None:
+            # ลองเฟชด้วย curl_cffi (TLS impersonate เบราว์เซอร์) เป็นตัวสำรอง
+            try:
+                from curl_cffi import requests as cffi_requests
+
+                r2 = cffi_requests.get(
+                    self.CALENDAR_URL,
+                    impersonate="chrome",
+                    headers=self._BROWSER_HEADERS,
+                    timeout=15,
+                )
+                if r2.ok and len(r2.text) > 50000:
+                    resp = r2
+            except Exception as e:
+                logger.debug(f"ดึงหน้า Calendar ด้วย curl_cffi ไม่สำเร็จ: {e!r}")
+
+        if resp is None:
+            logger.warning("ไม่สามารถ scrape หน้า Calendar ได้ (อาจโดน Block) ใช้ JSON Feed แทน")
+            return []
+
+        items = self._parse_html_calendar(resp.text)
+        logger.info(f"parse หน้า Calendar สำเร็จ: พบ {len(items)} รายการ")
+        return items
+
+    def _parse_html_calendar(self, html: str) -> List[ForexNewsItem]:
+        """แยกข้อมูลตารางข่าวจาก HTML หน้า ForexFactory Calendar"""
+        soup = BeautifulSoup(html, "html.parser")
+        items: List[ForexNewsItem] = []
+        ny_tz = self._new_york_tz()
+        current_day_epoch: Optional[int] = None
+
+        for tr in soup.select("tr.calendar__row"):
+            classes = tr.get("class", []) or []
+            if "calendar__row--day-breaker" in classes:
+                continue
+            if "calendar__row--no-event" in classes:
+                continue
+
+            # วันที่ (Epoch) จะอยู่เฉพาะแถวแรกของแต่ละวัน (--new-day) แถวถัด ๆ ไปใช้ค่าวันเดิม
+            epoch_str = tr.get("data-day-dateline")
+            if epoch_str:
+                try:
+                    current_day_epoch = int(epoch_str)
+                except (TypeError, ValueError):
+                    continue
+            if current_day_epoch is None:
+                continue
+
+            try:
+                day_ts = datetime.datetime.fromtimestamp(current_day_epoch, tz=ny_tz)
+            except (OSError, ValueError, OverflowError):
+                continue
+
+            time_str = self._extract_text(tr, ".calendar__time")
+            hour, minute = self._parse_ff_time(time_str)
+            if hour is None:
+                continue
+
+            utc_dt = day_ts.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            utc_dt = utc_dt.astimezone(datetime.timezone.utc)
+
+            impact_class = ""
+            impact_el = tr.select_one(".calendar__impact .icon")
+            if impact_el:
+                for c in impact_el.get("class", []) or []:
+                    if str(c).startswith("icon--ff-impact"):
+                        impact_class = str(c)
+            impact = self._IMPACT_MAP.get(impact_class, "Low")
+
+            items.append(
+                ForexNewsItem(
+                    title=self._extract_text(tr, ".calendar__event-title") or "Unknown",
+                    country=self._extract_text(tr, ".calendar__currency"),
+                    date_utc=utc_dt,
+                    date_local=utc_dt.astimezone(self.tz),
+                    impact=impact,
+                    forecast=self._clean_value(self._extract_text(tr, ".calendar__forecast")),
+                    previous=self._clean_value(self._extract_text(tr, ".calendar__previous")),
+                    actual=self._clean_value(self._extract_text(tr, ".calendar__actual")),
+                )
+            )
+
+        return items
+
+    @staticmethod
+    def _extract_text(container, selector: str) -> str:
+        """ดึงข้อความจาก Element แรกที่ตรง Selector"""
+        el = container.select_one(selector)
+        if el is None:
+            return ""
+        return el.get_text(" ", strip=True).replace("\xa0", " ")
+
+    @staticmethod
+    def _clean_value(value: str) -> str:
+        """ทำความสะอาดค่า Actual/Forecast/Previous (จับ '-' เป็นค่าว่าง = ยังไม่มีข้อมูล)"""
+        value = (value or "").strip()
+        if value in ("-", ""):
+            return ""
+        return value
+
+    @staticmethod
+    def _parse_ff_time(time_str: str) -> Tuple[Optional[int], int]:
+        """แปลงเวลาจาก ForexFactory เช่น '8:30am', '12:00pm', 'All Day' -> (hour, minute)"""
+        low = (time_str or "").strip().lower()
+        if not low:
+            return None, 0
+        try:
+            if low == "all day":
+                return 0, 0
+            if "am" in low or "pm" in low:
+                meridiem = "am" if "am" in low else "pm"
+                part = low.split(meridiem)[0].strip()
+                hh = int(part.split(":")[0])
+                mm = int(part.split(":")[1]) if ":" in part else 0
+                hour = 0 if hh == 12 else hh
+                if meridiem == "pm":
+                    hour = 12 if hh == 12 else hh + 12
+                return hour, mm
+            if ":" in low and low[0].isdigit():
+                hh = int(low.split(":")[0])
+                mm = int(low.split(":")[1][:2])
+                return hh % 24, mm
+        except Exception:
+            return None, 0
+        return None, 0
 
     def _parse_datetime(self, date_str: str) -> Optional[datetime.datetime]:
         """แปลง ISO String เป็น timezone-aware datetime object"""
