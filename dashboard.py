@@ -188,6 +188,17 @@ def cached_rates(symbol: str, timeframe_str: str, count: int) -> object:
     return price_service.get_rates(symbol=symbol, timeframe_str=timeframe_str, count=count)
 
 
+def drop_last_open_candle(df) -> object:
+    """
+    ตัดแท่งเทียนที่ยังไม่ปิด (กำลังก่อตัว) ออกหนึ่งแท่งสุดท้ายก่อนนำมาวิเคราะห์
+    เพื่อให้เลข EMA Distance / ราคาที่แสดงคงที่ ณ ระหว่างที่แท่งยังไม่ปิด
+    (กดรีเฟรช หรือกดปุ่มในหน้าเว็บหลายครั้ง เลขจะไม่สั่น/เพี้ยนตามราคาระหว่างแท่ง)
+    """
+    if df is not None and len(df) > 2:
+        return df.iloc[:-1].reset_index(drop=True)
+    return df
+
+
 def countdown_to_news(news_date_local) -> str:
     """
     คำนวณเวลานับถอยหลังก่อนข่าวออก (เฉพาะข่าวที่ยังไม่ถึงเวลา):
@@ -424,7 +435,11 @@ st.caption(f"เวลาปัจจุบัน (Local): {datetime.datetime.no
 
 # ดึงข้อมูลราคาจาก Yahoo Finance (ใช้ Cache เพื่อให้โหลดเร็วขึ้นเมื่อกลับมาดูซ้ำ)
 with st.spinner("กำลังดึงข้อมูลแท่งเทียนและคำนวณอินดิเคเตอร์..."):
-    df_rates = cached_rates(selected_symbol, selected_tf, 250)
+    df_rates = drop_last_open_candle(cached_rates(selected_symbol, selected_tf, 250))
+
+# คำนวณ EMA บนข้อมูลชุดเดียวกับที่ใช้วิเคราะห์ เพื่อให้ตัวเลขทุกจุด
+# (เกจ EMA Distance / metrics / กราฟแท่งเทียน) ตรงกันเสมอ ไม่เพี้ยน
+df_ema_full = indicator_service.calculate_ema(df_rates) if df_rates is not None and len(df_rates) > 0 else None
 
 signal_result = None
 if df_rates is not None and len(df_rates) > 0:
@@ -512,7 +527,7 @@ with col_status:
         mtf_cols = st.columns(len(mtf_tfs))
         
         for idx, tf in enumerate(mtf_tfs):
-            tf_df = cached_rates(selected_symbol, tf, 160)
+            tf_df = drop_last_open_candle(cached_rates(selected_symbol, tf, 160))
             tf_trend = "NEUTRAL"
             tf_color = "#94a3b8"
             
@@ -553,7 +568,6 @@ with col_gauge:
                 mode="gauge+number+delta",
                 value=spread_ema,
                 domain={"x": [0, 1], "y": [0, 1]},
-                title={"text": "EMA Distance (EMA50 - EMA150)", "font": {"size": 16, "color": "#cbd5e1"}},
                 delta={"reference": 0, "increasing": {"color": "#10b981"}, "decreasing": {"color": "#ef4444"}},
                 gauge={
                     "axis": {"range": [-max_range, max_range], "tickcolor": "#64748b"},
@@ -574,8 +588,9 @@ with col_gauge:
             )
         )
         fig_gauge.update_layout(
-            height=240,
-            margin=dict(l=20, r=20, t=40, b=20),
+            height=270,
+            margin=dict(l=20, r=20, t=75, b=20),
+            title=dict(text="📏 EMA Distance (EMA50 - EMA150)", x=0.5, xanchor="center", font=dict(size=14, color="#cbd5e1")),
             paper_bgcolor="rgba(0,0,0,0)",
             font={"color": "#e2e8f0"},
         )
@@ -597,9 +612,9 @@ with col_gauge:
 # ==========================================
 # 6. Interactive Candlestick + EMA Chart
 # ==========================================
-if df_rates is not None and len(df_rates) > 0:
+if df_ema_full is not None and len(df_ema_full) > 0:
     with st.expander("📈 ดูกราฟแท่งเทียน Candlestick พร้อมเส้น EMA 50 / 150 แบบละเอียด", expanded=False):
-        df_plot = indicator_service.calculate_ema(df_rates).tail(120)
+        df_plot = df_ema_full.tail(120)
 
         fig_chart = make_subplots(
             rows=2,
