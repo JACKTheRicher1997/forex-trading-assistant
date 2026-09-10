@@ -216,6 +216,7 @@ POLL_INTERVAL_SECONDS=30
 | `TIMEZONE` | เวลาไทย | `Asia/Bangkok` | .env / Streamlit |
 | `WEEKLY_ALERT_DAY` | วันส่งข่าวสรุป | `monday` | .env |
 | `WEEKLY_ALERT_TIME` | เวลาส่งข่าวสรุป (24 ชม.) | `06:30` | .env |
+| `WEEKLY_ALERT_CURRENCIES` | สกุลเงินข่าวใน LINE (`ALL` = ทุกสกุล) | `USD` | .env / GitHub |
 | `POLL_INTERVAL_SECONDS` | ความถี่ตรวจ EMA | `30` | .env |
 
 ---

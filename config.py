@@ -79,6 +79,8 @@ class NewsConfig:
     timezone: str = field(default_factory=lambda: os.getenv("TIMEZONE", "Asia/Bangkok"))
     weekly_alert_day: str = field(default_factory=lambda: os.getenv("WEEKLY_ALERT_DAY", "monday"))
     weekly_alert_time: str = field(default_factory=lambda: os.getenv("WEEKLY_ALERT_TIME", "06:30"))  # 06:30 เช้าวันจันทร์ ก่อนตลาดเปิด
+    # สกุลเงินที่ต้องการแจ้งเตือนใน LINE (คั่นด้วย , เช่น "USD,EUR") ค่าเริ่มต้นเฉพาะ USD
+    weekly_alert_currencies: str = field(default_factory=lambda: os.getenv("WEEKLY_ALERT_CURRENCIES", "USD"))
 
 
 @dataclass(frozen=True)

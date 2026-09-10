@@ -17,6 +17,8 @@ jobs:
       TIMEZONE: "Asia/Bangkok"
       WEEKLY_ALERT_DAY: "monday"
       WEEKLY_ALERT_TIME: "06:30"
+      # สกุลเงินข่าวที่ต้องการแจ้งเตือนใน LINE (ALL = ทุกสกุลเงิน)
+      WEEKLY_ALERT_CURRENCIES: "USD"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

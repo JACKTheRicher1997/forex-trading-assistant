@@ -425,6 +425,21 @@ class ForexFactoryNewsService:
             except Exception:
                 return None
 
+    def _filter_alert_currencies(self, news_items: List[ForexNewsItem]) -> List[ForexNewsItem]:
+        """
+        กรองข่าวตามสกุลเงินที่ตั้งค่าไว้ใน LINE (WEEKLY_ALERT_CURRENCIES)
+        เช่น "USD" -> เฉพาะข่าว USD, "USD,EUR" -> USD + EUR
+        """
+        raw = getattr(config.news, "weekly_alert_currencies", "USD")
+        currencies = [c.strip().upper() for c in raw.split(",") if c.strip()]
+        if not currencies or "ALL" in currencies:
+            return news_items
+        filtered = [n for n in news_items if n.country.upper() in currencies]
+        logger.info(
+            f"กรองข่าวตามสกุลเงิน {currencies} สำหรับ LINE: เหลือ {len(filtered)} จาก {len(news_items)} รายการ"
+        )
+        return filtered
+
     def group_by_day(self, news_items: List[ForexNewsItem]) -> Dict[str, List[ForexNewsItem]]:
         """
         จัดกลุ่มข่าวตามวันที่ (วันจันทร์ ถึง วันศุกร์)
@@ -467,6 +482,9 @@ class ForexFactoryNewsService:
             news_items = self.fetch_this_week_news(only_high_impact=True)
         else:
             news_items = [n for n in news_items if n.is_high_impact]
+
+        # กรองเฉพาะสกุลเงินที่ตั้งค่าไว้ใน LINE (ค่า default: USD)
+        news_items = self._filter_alert_currencies(news_items)
 
         business_days = self.get_week_business_days(reference_date)
         start_date_str = business_days[0].strftime("%d/%m/%Y")
