@@ -14,6 +14,18 @@ from config import config
 
 logger = get_logger("SchedulerService")
 
+# กันการเรียกราคา Yahoo Finance ตอนแท่งยังไม่เปลี่ยนค่า:
+# EMA Cross จะเปลี่ยนสถานะได้ก็ต่อเมื่อแท่งเทียนปิดเท่านั้น การ poll ถี่กว่าไม่มีประโยชน์
+# จึงให้ตรวจ EMA ตรงจังหวะที่แท่ง M5 ปิดพอดี (+ เผื่อ 10 วิ ให้ Yahoo อัปเดตข้อมูล)
+M5_CLOSE_BUFFER_SECONDS = 10
+
+
+def _seconds_until_next_m5_close() -> int:
+    """จำนวนวินาทีที่เหลือจนกว่าแท่ง M5 ถัดไปจะปิด (เผื่อ +10 วิ ให้ Yahoo อัปเดตก่อน)"""
+    now = datetime.now()
+    elapsed = (now.minute % 5) * 60 + now.second
+    return max(15, 300 - elapsed + M5_CLOSE_BUFFER_SECONDS)
+
 
 class AlertScheduler:
     """
@@ -35,6 +47,7 @@ class AlertScheduler:
         self.london_alert_callback = london_alert_callback
         self.release_alert_callback = release_alert_callback
         self.check_interval_seconds = check_interval_seconds or config.poll_interval_seconds
+        self._last_ema_check_time = 0.0
         self._is_running = False
         self._thread: Optional[threading.Thread] = None
 

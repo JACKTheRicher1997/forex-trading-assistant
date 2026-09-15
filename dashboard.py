@@ -10,6 +10,7 @@ Trading Assistant & Alert System - Web Dashboard
 
 import datetime
 import calendar
+from concurrent.futures import ThreadPoolExecutor
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
@@ -579,22 +580,32 @@ if signal_result:
         # จัดเป็น 2 แถว (แถวบน 3 ไทม์เฟรม, แถวล่าง 2 ไทม์เฟรม) เพื่อไม่ให้มีพื้นที่ว่างด้านล่าง
         mtf_rows = [["M5", "M15", "H1"], ["H4", "D1"]]
 
+        # โหลดราคา + วิเคราะห์เทรนทุกไทม์เฟรมแบบขนาน (ThreadPool) 
+        # แทนการวนลูป fetch ทีละตัว เพื่อลดเวลาหน้าแรกค้าง (5 เฟรม → เหลือ ~เท่าเฟรมเดียว)
+        mtf_tfs = [tf for row in mtf_rows for tf in row]
+
+        def _mtf_analyze_one(tf: str):
+            tf_df = drop_last_open_candle(cached_rates(selected_symbol, tf, 160))
+            trend = "NEUTRAL"
+            color = "#94a3b8"
+            if tf_df is not None and len(tf_df) > 0:
+                res = indicator_service.analyze(tf_df, symbol=selected_symbol, timeframe=tf)
+                if res:
+                    if res.is_bullish:
+                        trend, color = "BULLISH 🟢", "#10b981"
+                    elif res.is_bearish:
+                        trend, color = "BEARISH 🔴", "#ef4444"
+            return tf, trend, color
+
+        mtf_results = {}
+        with ThreadPoolExecutor(max_workers=min(len(mtf_tfs), 5)) as _pool:
+            for _tf, _trend, _col in _pool.map(_mtf_analyze_one, mtf_tfs):
+                mtf_results[_tf] = (_trend, _col)
+
         for row in mtf_rows:
             row_cols = st.columns(len(row))
             for col, tf in zip(row_cols, row):
-                tf_df = drop_last_open_candle(cached_rates(selected_symbol, tf, 160))
-                tf_trend = "NEUTRAL"
-                tf_color = "#94a3b8"
-
-                if tf_df is not None and len(tf_df) > 0:
-                    tf_res = indicator_service.analyze(tf_df, symbol=selected_symbol, timeframe=tf)
-                    if tf_res:
-                        if tf_res.is_bullish:
-                            tf_trend = "BULLISH 🟢"
-                            tf_color = "#10b981"
-                        elif tf_res.is_bearish:
-                            tf_trend = "BEARISH 🔴"
-                            tf_color = "#ef4444"
+                tf_trend, tf_color = mtf_results[tf]
 
                 with col:
                     # กล่องสรุปเทรนแบบกดได้: คลิกเพื่อสลับเลือกกรอบเวลา (Timeframe) ใน sidebar

@@ -100,6 +100,11 @@ class TradingAssistant:
             logger.warning(f"ไม่สามารถดึงแท่งเทียนสำหรับ {symbol} ({timeframe}) เพื่อตรวจ EMA Cross ได้")
             return
 
+        # ตัดแท่งเทียนที่ยังไม่ปิด (กำลังก่อตัว) ออกหนึ่งแท่งสุดท้ายก่อนวิเคราะห์
+        # ให้สอดคล้องกับ Dashboard ทุกประการ ไม่วิเคราะห์แท่งที่ยังปิดไม่ครบ
+        if len(df) > 2:
+            df = df.iloc[:-1].reset_index(drop=True)
+
         # คำนวณและวิเคราะห์อินดิเคเตอร์
         result = self.indicator_service.analyze(df, symbol=symbol, timeframe=timeframe)
         if result is None:

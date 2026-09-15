@@ -372,7 +372,7 @@ class ForexFactoryNewsService:
 
     def _parse_html_calendar(self, html: str) -> List[ForexNewsItem]:
         """แยกข้อมูลตารางข่าวจาก HTML หน้า ForexFactory Calendar"""
-        soup = BeautifulSoup(html, "html.parser")
+        soup = BeautifulSoup(html, "lxml")
         items: List[ForexNewsItem] = []
         # ForexFactory เรนเดอร์เวลาเป็น Timezone ของผู้เข้าชม -> ต้องตรวจสอบจากหน้าเว็บ
         render_tz = self._detect_render_timezone(html)

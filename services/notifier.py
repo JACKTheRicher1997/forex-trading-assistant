@@ -6,6 +6,7 @@ Notification Service Module
 """
 
 from typing import Optional, Dict, Any
+import time
 import requests
 
 from logger import get_logger
@@ -26,6 +27,8 @@ class LineNotifier:
     LINE_PUSH_API_URL = "https://api.line.me/v2/bot/message/push"
     LINE_QUOTA_URL = "https://api.line.me/v2/bot/message/quota"
     LINE_QUOTA_CONSUMPTION_URL = "https://api.line.me/v2/bot/message/quota/consumption"
+    # แคชผลโควต้าไว้ชั่วคราว เพื่อไม่ต้องเรียก LINE API ซ้ำ 2 รอบในทุกข้อความที่ส่ง
+    QUOTA_CACHE_SECONDS = 3600  # 1 ชั่วโมง (ตัวเลขโควต้าไม่ค่อยเปลี่ยน)
 
     def __init__(
         self,
@@ -36,6 +39,10 @@ class LineNotifier:
         self.notify_token = notify_token or config.line.notify_token
         self.channel_access_token = channel_access_token or config.line.channel_access_token
         self.user_id = user_id or config.line.user_id
+        self._quota_cache: Optional[Dict[str, Any]] = None
+        self._quota_cache_time: float = 0.0
+        self._consumption_cache: Optional[Dict[str, Any]] = None
+        self._consumption_cache_time: float = 0.0
 
     def send_via_line_notify(self, message: str) -> bool:
         """ส่งข้อความผ่าน LINE Notify Service"""
@@ -206,7 +213,7 @@ class LineNotifier:
 
         return success
 
-    def get_quota(self) -> Optional[Dict[str, Any]]:
+    def get_quota(self, use_cache: bool = True) -> Optional[Dict[str, Any]]:
         """
         ดึงวงเงิน (Target Limit) การส่งข้อความประจำเดือนของ LINE Messaging API
         :return: {"type": "limited", "value": 200} หรือ {"type": "none"} (ไม่มีวงเงิน) หรือ None
@@ -214,6 +221,9 @@ class LineNotifier:
         if not self.channel_access_token:
             logger.debug("ไม่ได้ตั้งค่า LINE_CHANNEL_ACCESS_TOKEN ข้ามการตรวจโควต้า")
             return None
+        # ใช้แคชถ้ายังไม่หมดอายุ ป้องกันการเรียก API ซ้ำในทุกข้อความที่ส่ง
+        if use_cache and self._quota_cache and (time.time() - self._quota_cache_time) < self.QUOTA_CACHE_SECONDS:
+            return self._quota_cache
         try:
             headers = {"Authorization": f"Bearer {self.channel_access_token}"}
             resp = requests.get(self.LINE_QUOTA_URL, headers=headers, timeout=10)
@@ -222,12 +232,15 @@ class LineNotifier:
                 return None
             data = resp.json()
             logger.info(f"โควต้า LINE API: {data}")
+            if use_cache:
+                self._quota_cache = data
+                self._quota_cache_time = time.time()
             return data
         except Exception as e:
             logger.error(f"เกิดข้อผิดพลาดการดึงโควต้า: {e}")
             return None
 
-    def get_consumption(self) -> Optional[Dict[str, Any]]:
+    def get_consumption(self, use_cache: bool = True) -> Optional[Dict[str, Any]]:
         """
         ดึงจำนวนข้อความที่ส่งไปแล้วในเดือนนี้ (ใช้ผ่าน LINE Messaging API)
         :return: {"totalUsage": 5} หรือ None
@@ -235,6 +248,9 @@ class LineNotifier:
         if not self.channel_access_token:
             logger.debug("ไม่ได้ตั้งค่า LINE_CHANNEL_ACCESS_TOKEN ข้ามการตรวจการใช้ข้อความ")
             return None
+        # ใช้แคชถ้ายังไม่หมดอายุ
+        if use_cache and self._consumption_cache and (time.time() - self._consumption_cache_time) < self.QUOTA_CACHE_SECONDS:
+            return self._consumption_cache
         try:
             headers = {"Authorization": f"Bearer {self.channel_access_token}"}
             resp = requests.get(self.LINE_QUOTA_CONSUMPTION_URL, headers=headers, timeout=10)
@@ -243,6 +259,9 @@ class LineNotifier:
                 return None
             data = resp.json()
             logger.info(f"ยอดใช้ข้อความ LINE API เดือนนี้: {data}")
+            if use_cache:
+                self._consumption_cache = data
+                self._consumption_cache_time = time.time()
             return data
         except Exception as e:
             logger.error(f"เกิดข้อผิดพลาดการดึงยอดใช้ข้อความ: {e}")
