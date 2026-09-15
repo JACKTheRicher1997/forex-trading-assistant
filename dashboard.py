@@ -491,7 +491,7 @@ st.caption(f"เวลาปัจจุบัน (Local): {datetime.datetime.no
 
 # ดึงข้อมูลราคาจาก Yahoo Finance (ใช้ Cache เพื่อให้โหลดเร็วขึ้นเมื่อกลับมาดูซ้ำ)
 with st.spinner("กำลังดึงข้อมูลแท่งเทียนและคำนวณอินดิเคเตอร์..."):
-    df_rates = drop_last_open_candle(cached_rates(selected_symbol, selected_tf, 250))
+    df_rates = drop_last_open_candle(cached_rates(selected_symbol, selected_tf, 800))
 
 # คำนวณ EMA บนข้อมูลชุดเดียวกับที่ใช้วิเคราะห์ เพื่อให้ตัวเลขทุกจุด
 # (เกจ EMA Distance / metrics / กราฟแท่งเทียน) ตรงกันเสมอ ไม่เพี้ยน
@@ -569,13 +569,17 @@ if signal_result:
             )
         with m4:
             cross_text = "ไม่มีการตัดกัน"
+            cross_help = None
             if signal_result.cross_signal == CrossSignal.CROSS_UP:
                 cross_text = "🚀 ตัดขึ้น (Uptrend)"
+                cross_help = f"ล่าสุด: {signal_result._format_candle_time_thai()}"
             elif signal_result.cross_signal == CrossSignal.CROSS_DOWN:
                 cross_text = "🔻 ตัดลง (Downtrend)"
+                cross_help = f"ล่าสุด: {signal_result._format_candle_time_thai()}"
             st.metric(
                 label="สัญญาณล่าสุด (Cross)",
                 value=cross_text,
+                help=cross_help,
             )
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -590,7 +594,7 @@ if signal_result:
         mtf_tfs = [tf for row in mtf_rows for tf in row]
 
         def _mtf_analyze_one(tf: str):
-            tf_df = drop_last_open_candle(cached_rates(selected_symbol, tf, 160))
+            tf_df = drop_last_open_candle(cached_rates(selected_symbol, tf, 800))
             trend = "NEUTRAL"
             color = "#94a3b8"
             if tf_df is not None and len(tf_df) > 0:

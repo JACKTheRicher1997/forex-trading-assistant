@@ -204,14 +204,11 @@ class IndicatorService:
         slow_col = f"ema_{self.slow_period}"
 
         curr_row = df_calc.iloc[-1]
-        prev_row = df_calc.iloc[-2]
 
         curr_time = curr_row["time"]
         curr_close = float(curr_row["close"])
         curr_fast = float(curr_row[fast_col])
         curr_slow = float(curr_row[slow_col])
-        prev_fast = float(prev_row[fast_col])
-        prev_slow = float(prev_row[slow_col])
 
         if curr_fast > curr_slow:
             current_trend = TrendState.BULLISH
@@ -220,25 +217,40 @@ class IndicatorService:
         else:
             current_trend = TrendState.NEUTRAL
 
-        cross_signal = CrossSignal.NONE
-        if prev_fast <= prev_slow and curr_fast > curr_slow:
-            cross_signal = CrossSignal.CROSS_UP
-        elif prev_fast >= prev_slow and curr_fast < curr_slow:
-            cross_signal = CrossSignal.CROSS_DOWN
+        # หา Cross ล่าสุดภายในหน้าต่างข้อมูล (ไม่ใช่แค่แท่งสุดท้าย)
+        # เพื่อให้ Dashboard แสดง "สัญญาณล่าสุด" ตรงกับความเป็นจริงจนกว่าจะมี Cross ใหม่
+        last_cross_signal = CrossSignal.NONE
+        last_cross_time = None
+        fast_arr = df_calc[fast_col].astype(float)
+        slow_arr = df_calc[slow_col].astype(float)
+        scan_start = max(1, len(df_calc) - 300)
+        prev_is_bull = bool(fast_arr.iloc[0] > slow_arr.iloc[0])
+        for i in range(scan_start, len(df_calc)):
+            cur_is_bull = bool(fast_arr.iloc[i] > slow_arr.iloc[i])
+            if cur_is_bull != prev_is_bull:
+                last_cross_signal = CrossSignal.CROSS_UP if cur_is_bull else CrossSignal.CROSS_DOWN
+                last_cross_time = df_calc.iloc[i]["time"]
+            prev_is_bull = cur_is_bull
+
+        cross_signal = last_cross_signal
+        cross_time_for_result = last_cross_time if last_cross_time is not None else curr_time
 
         is_new_signal = False
         if cross_signal != CrossSignal.NONE:
-            if self._last_alerted_candle_time != curr_time or self._last_alerted_signal_type != cross_signal:
+            if (
+                self._last_alerted_candle_time != cross_time_for_result
+                or self._last_alerted_signal_type != cross_signal
+            ):
                 is_new_signal = True
-                self._last_alerted_candle_time = curr_time
+                self._last_alerted_candle_time = cross_time_for_result
                 self._last_alerted_signal_type = cross_signal
             else:
-                logger.debug(f"สัญญาณ {cross_signal.value} ในแท่งเทียน {curr_time} ถูกส่งแจ้งเตือนไปแล้ว")
+                logger.debug(f"สัญญาณ {cross_signal.value} ในแท่งเทียน {cross_time_for_result} ถูกส่งแจ้งเตือนไปแล้ว")
 
         return SignalResult(
             symbol=symbol,
             timeframe=timeframe,
-            candle_time=curr_time,
+            candle_time=cross_time_for_result,
             close_price=curr_close,
             ema_fast=curr_fast,
             ema_slow=curr_slow,
