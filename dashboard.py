@@ -17,7 +17,7 @@ import streamlit as st
 
 from config import config
 from logger import get_logger
-from services.price_service import PriceService
+from services.price_service import create_price_service
 from services.indicator_service import IndicatorService, TrendState, CrossSignal
 from services.news_service import ForexFactoryNewsService, ForexNewsItem
 from services.notifier import NotificationService
@@ -201,7 +201,7 @@ st.markdown(
 @st.cache_resource
 def get_services():
     """สร้าง Service Instances แบบ Cached ป้องกันการสร้างซ้ำใน Streamlit Rerun"""
-    price_srv = PriceService()
+    price_srv = create_price_service()
     ind_srv = IndicatorService()
     news_srv = ForexFactoryNewsService()
     notif_srv = NotificationService()

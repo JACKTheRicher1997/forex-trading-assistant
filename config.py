@@ -114,6 +114,9 @@ class AppConfig:
     line: LineConfig = field(default_factory=LineConfig)
     news: NewsConfig = field(default_factory=NewsConfig)
     poll_interval_seconds: int = field(default_factory=lambda: int(os.getenv("POLL_INTERVAL_SECONDS", "30")))
+    # แหล่งข้อมูลราคา: "yahoo" (ค่าเริ่มต้น, GC=F futures) หรือ "twelvedata" (XAU/USD spot)
+    price_source: str = field(default_factory=lambda: os.getenv("PRICE_SOURCE", "yahoo").strip().lower())
+    twelvedata_api_key: str = field(default_factory=lambda: _get_secret("TWELVEDATA_API_KEY", ""))
 
 
 # สร้าง Global Config Object พร้อมใช้งาน

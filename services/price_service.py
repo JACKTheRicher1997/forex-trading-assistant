@@ -15,6 +15,28 @@ from config import config
 logger = get_logger("PriceService")
 
 
+def create_price_service() -> "PriceService":
+    """
+    สร้าง Price Service ตามค่า PRICE_SOURCE ใน .env / env
+    - "twelvedata" -> TwelveDataPriceService (XAU/USD Spot ตรงกับ MT5/Exness มากที่สุด)
+      ถ้ายังไม่ได้ตั้ง TWELVEDATA_API_KEY จะ fallback ไป Yahoo อัตโนมัติ
+    - อื่น ๆ / ค่าเริ่มต้น -> PriceService (Yahoo Finance GC=F Futures)
+    """
+    source = config.price_source
+    if source == "twelvedata":
+        from services.twelvedata_price_service import TwelveDataPriceService
+
+        if config.twelvedata_api_key:
+            logger.info(f"PRICE_SOURCE=twelvedata -> ใช้ TwelveData (Spot XAU/USD)")
+            return TwelveDataPriceService()
+        logger.warning(
+            "PRICE_SOURCE=twelvedata แต่ยังไม่ตั้ง TWELVEDATA_API_KEY "
+            "-> fallback ใช้ Yahoo Finance แทน"
+        )
+    logger.info("PRICE_SOURCE=yahoo -> ใช้ Yahoo Finance (GC=F Futures)")
+    return PriceService()
+
+
 # Symbol Mapping: แปลงสัญลักษณ์ MT5 เป็น Yahoo Finance Symbol
 SYMBOL_MAP = {
     "XAUUSD": "GC=F",      # Gold Futures

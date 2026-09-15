@@ -20,7 +20,7 @@ if sys.stdout and hasattr(sys.stdout, "reconfigure"):
 
 from logger import get_logger, AppLogger
 from config import config
-from services.price_service import PriceService
+from services.price_service import create_price_service
 from services.indicator_service import IndicatorService, CrossSignal
 from services.news_service import ForexFactoryNewsService
 from services.notifier import NotificationService
@@ -43,7 +43,7 @@ class TradingAssistant:
         notifier: Optional[NotificationService] = None,
     ):
         # 1. จัดการ Dependency Injection
-        self.price_service = price_service or PriceService()
+        self.price_service = price_service or create_price_service()
         self.indicator_service = indicator_service or IndicatorService()
         self.news_service = news_service or ForexFactoryNewsService()
         self.notifier = notifier or NotificationService()

@@ -14,6 +14,9 @@ jobs:
     permissions:
       contents: write
     env:
+      # แหล่งข้อมูลราคา: twelvedata = XAU/USD Spot (ตรงกับ MT5/Exness)
+      PRICE_SOURCE: "twelvedata"
+      TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
       LINE_NOTIFY_TOKEN: ${{ secrets.LINE_NOTIFY_TOKEN }}
       LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
       LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
