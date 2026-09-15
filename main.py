@@ -100,10 +100,21 @@ class TradingAssistant:
             logger.warning(f"ไม่สามารถดึงแท่งเทียนสำหรับ {symbol} ({timeframe}) เพื่อตรวจ EMA Cross ได้")
             return
 
-        # ตัดแท่งเทียนที่ยังไม่ปิด (กำลังก่อตัว) ออกหนึ่งแท่งสุดท้ายก่อนวิเคราะห์
-        # ให้สอดคล้องกับ Dashboard ทุกประการ ไม่วิเคราะห์แท่งที่ยังปิดไม่ครบ
-        if len(df) > 2:
-            df = df.iloc[:-1].reset_index(drop=True)
+        # ตัดแท่งเทียนที่ยังไม่ปิดจริงเท่านั้น (เช็คจากเวลาจริง) — ไม่ใช้การตัดแท่งสุดท้าย
+        # แบบตายตัว (iloc[:-1]) เพราะ poll ถูก align ให้วิ่งตรงแท่ง M5 ปิดพอดี ถ้า Yahoo
+        # ยังไม่ทันเพิ่มแท่งใหม่ แท่งสุดท้ายคือ "แท่งที่เพิ่งปิดซึ่งมี EMA Cross เกิดจริงอยู่"
+        # การตัดแบบตายตัวจะกลืน Cross ครั้งที่ 2 ทิ้งไป -> ตรวจไม่พบ -> ไม่แจ้ง LINE
+        if df is not None and len(df) > 2:
+            last_ts = df["time"].iloc[-1]
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            if last_ts.tzinfo is None:
+                last_ts = last_ts.replace(tzinfo=datetime.timezone.utc)
+            else:
+                last_ts = last_ts.astimezone(datetime.timezone.utc)
+            # M5 = 300 วินาที (guard ข้างบนบังคับ M5 ไว้แล้ว)
+            still_forming = (now_utc - last_ts).total_seconds() < 300
+            if still_forming:
+                df = df.iloc[:-1].reset_index(drop=True)
 
         # คำนวณและวิเคราะห์อินดิเคเตอร์
         result = self.indicator_service.analyze(df, symbol=symbol, timeframe=timeframe)
