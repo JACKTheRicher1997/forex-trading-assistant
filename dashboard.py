@@ -17,7 +17,12 @@ import streamlit as st
 
 from config import config
 from logger import get_logger
-from services.price_service import create_price_service
+try:
+    from services.price_service import create_price_service
+except ImportError:
+    # Fallback ถ้า snapshot ยังไม่ทัน (โค้ดเก่าไม่มี factory) -> ใช้ PriceService เก่า
+    from services.price_service import PriceService as create_price_service
+    get_logger("Dashboard").warning("ไม่พบ create_price_service (โค้ดเก่า?) -> ใช้ PriceService แทน")
 from services.indicator_service import IndicatorService, TrendState, CrossSignal
 from services.news_service import ForexFactoryNewsService, ForexNewsItem
 from services.notifier import NotificationService
