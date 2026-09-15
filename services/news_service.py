@@ -174,18 +174,21 @@ class ForexFactoryNewsService:
         # Fallback เป็น GMT+7 (เวลาไทย)
         return datetime.timezone(datetime.timedelta(hours=7))
 
-    def fetch_this_week_news(self, force_refresh: bool = False, only_high_impact: bool = True) -> List[ForexNewsItem]:
+    def fetch_this_week_news(
+        self, force_refresh: bool = False, only_high_impact: bool = True, cache_seconds: int = 300
+    ) -> List[ForexNewsItem]:
         """
         ดึงข้อมูลข่าวประจำสัปดาห์นี้จาก ForexFactory
         ลำดับข้อมูล: scrape หน้า Calendar ของเว็บก่อน (มีค่า Actual) -> ใช้ JSON Feed เป็น Fallback
         :param force_refresh: บังคับดึงข้อมูลใหม่โดยไม่ใช้แคช
         :param only_high_impact: กรองเอาเฉพาะข่าวสีแดง (High Impact) เท่านั้น
+        :param cache_seconds: อายุแคชที่อนุญาต (วินาที) ก่อนดึงข้อมูลใหม่ (เช่น ตรวจผลข่าวทุกนาที ใช้ค่าน้อย)
         :return: รายการ ForexNewsItem
         """
         now = datetime.datetime.now(self.tz)
-        # ใช้แคชถ้าเพิ่งดึงไปไม่เกิน 5 นาที
+        # ใช้แคชถ้าเพิ่งดึงไปไม่เกิน cache_seconds วินาที
         if not force_refresh and self._cached_news and self._last_fetched:
-            if (now - self._last_fetched).total_seconds() < 300:
+            if (now - self._last_fetched).total_seconds() < cache_seconds:
                 logger.debug("ใช้ข้อมูลข่าวจากหน่วยความจำแคช")
                 return [n for n in self._cached_news if not only_high_impact or n.is_high_impact]
 
@@ -554,6 +557,255 @@ class ForexFactoryNewsService:
                 grouped[day_key] = []
             grouped[day_key].append(item)
         return grouped
+
+    def get_today_high_impact_news(
+        self, reference_date: Optional[datetime.date] = None
+    ) -> List[ForexNewsItem]:
+        """
+        ดึงข่าวสีแดง (High-Impact) ของวันนี้ เรียงตามเวลาที่ข่าวออก
+        ใช้สำหรับตรวจสอบว่าวันนี้มีข่าวแดงหรือไม่ เพื่อแจ้งเตือนห้ามเทรดช่วง London Session
+        :param reference_date: วันอ้างอิง (ค่าเริ่มต้นคือวันปัจจุบันตาม Timezone ที่ตั้งค่า)
+        :return: รายการข่าวแดงของวันนี้ (เรียงจากเร็วไปช้า)
+        """
+        target_date = reference_date or datetime.datetime.now(self.tz).date()
+        all_news = self.fetch_this_week_news(force_refresh=False, only_high_impact=True)
+        today_news = [n for n in all_news if n.date_local.date() == target_date]
+        today_news.sort(key=lambda n: n.date_local)
+        logger.info(
+            f"ข่าวสีแดงของวัน {target_date}: พบ {len(today_news)} รายการ "
+            f"(จากข่าวแดงทั้งหมดในสัปดาห์ {len(all_news)} รายการ)"
+        )
+        return today_news
+
+    def format_london_session_warning_message(
+        self, news_items: Optional[List[ForexNewsItem]] = None,
+        reference_date: Optional[datetime.date] = None,
+    ) -> str:
+        """
+        จัดรูปแบบข้อความเตือนห้ามเทรดช่วงเริ่ม London Session (14:00 น.)
+        ส่งเข้า LINE เฉพาะวันที่มีข่าวสีแดง (High-Impact)
+
+        เนื้อหาตามข้อกำหนด:
+        - อย่าเพิ่งเทรดช่วง 14:00 จนถึงเวลาข่าวออกจริง
+        - ตลาด London จะ Sideway ตลอด โอกาสแพ้สูงมาก
+        - รอให้ข่าวจริงออกก่อน แล้วค่อยเลือกทางเข้าเทรด
+        """
+        if news_items is None:
+            news_items = self.get_today_high_impact_news(reference_date)
+            if not news_items:
+                return ""
+
+        lines = [
+            "⚠️ [คำเตือน London Session] ⚠️",
+            f"🟥 วันนี้ ({self._format_warning_date()}) มีข่าวสีแดง (High-Impact)!!",
+            "",
+            "🧊 ตลาด London ยังเปิดไม่ชัดเจน ราคาจะเดินกลับไปกลับมา",
+            "   (Sideway) ตลอด ตั้งแต่ 14:00 น. จนกว่าข่าวจริงจะออก",
+            "",
+            "🛑 อย่าเพิ่งเข้าเทรด!!",
+            "⏰ ช่วง 14:00 น. ถึงเวลาข่าวออกจริง",
+            "   ➜ จะ Sideway ตลอด → โอกาสแพ้สูงมาก 💸",
+            "",
+            f"📰 ข่าวสีแดงวันนี้ ({len(news_items)} ข่าว) รอข่าวจริงออกก่อนค่อยเทรด:",
+        ]
+
+        for idx, event in enumerate(news_items, start=1):
+            lines.append(f"   {idx}. ⏰ {event.time_str} | [{event.country}] {event.title}")
+
+        lines.extend(
+            [
+                "",
+                "✅ วิธีที่ปลอดภัย: รอให้ข่าวจริงออกก่อน",
+                "   ตลาดจะเลือกทางจริงหลังข่าว (Direction ใหม่)",
+                "   แล้วค่อยเข้าเทรดตามทิศทาง นั่นแหละโอกาสดีที่สุดครับ 💪",
+            ]
+        )
+
+        return "\n".join(lines)
+
+    def _format_warning_date(self, reference_date: Optional[datetime.date] = None) -> str:
+        """วันเดือนปีในรูปแบบ วว/ดด/ปปปป เช่น 12/09/2026"""
+        target_date = reference_date or datetime.datetime.now(self.tz).date()
+        thai_day_names = {
+            0: "จันทร์", 1: "อังคาร", 2: "พุธ", 3: "พฤหัสบดี", 4: "ศุกร์",
+        }
+        weekday_name = thai_day_names.get(target_date.weekday(), "สุดสัปดาห์")
+        date_part = target_date.strftime("%d/%m/%Y")
+        return f"{date_part} ({weekday_name})"
+
+    def get_released_news_for_alert(
+        self,
+        reference_time: Optional[datetime.datetime] = None,
+        delay_minutes: Optional[int] = None,
+        stale_minutes: Optional[int] = None,
+    ) -> List[ForexNewsItem]:
+        """
+        หาข่าวสีแดงที่สำคัญที่ออกจริง (มีค่า Actual) และผ่านไปแล้ว delay_minutes นาที
+        เพื่อส่งแจ้งเตือนผลข่าวจริงเข้า LINE (เช่น ข่าวออก 19:30 -> แจ้ง 19:35)
+
+        - ข้ามข่าวที่ยังไม่มีค่า Actual (scrape อาจไม่สำเร็จ ให้ลองใหม่รอบถัดไป)
+        - ข่าวที่ผ่านไปนานเกิน stale_minutes จะถูกข้าม (ไม่ย้อนแจ้งข่าวเก่า)
+        - ถ่ายแคชสั้น (120 วินาที) เพื่อจับข่าวใหม่ได้ไว ไม่เบียด ForexFactory มากเกินไป
+        """
+        delay_minutes = delay_minutes if delay_minutes is not None else config.news.news_release_alert_delay_minutes
+        stale_minutes = stale_minutes if stale_minutes is not None else max(delay_minutes * 6, 120)
+        now = reference_time or datetime.datetime.now(self.tz)
+        items = self.fetch_this_week_news(only_high_impact=True, cache_seconds=120)
+
+        result: List[ForexNewsItem] = []
+        for item in items:
+            if not item.actual:
+                continue
+            age_minutes = (now - item.date_local).total_seconds() / 60.0
+            if delay_minutes <= age_minutes <= stale_minutes:
+                result.append(item)
+
+        result.sort(key=lambda n: n.date_local)
+        logger.info(
+            f"ข่าวแดงที่ออกจริงครบ {delay_minutes} นาที และยังไม่เกิน {stale_minutes} นาที: "
+            f"พบ {len(result)} รายการ"
+        )
+        return result
+
+    def format_release_alert_text(self, news_item: ForexNewsItem) -> str:
+        """
+        ข้อความแจ้งเตือนผลข่าวจริง (ใช้เป็นข้อความตัวอักษรธรรมดา / Fallback สำหรับ LINE Notify)
+        สีของตัวเลขจริงจะแสดงเป็นอีโมจิ 🟢 (ดีกว่าคาด) 🔴 (แย่กว่าคาด) ⚪ (ปกติ)
+        """
+        actual = news_item.actual or "-"
+        forecast = news_item.forecast or "-"
+        previous = news_item.previous or "-"
+
+        if news_item.is_actual_better:
+            color_emoji, summary = "🟢", "ดีกว่าค่าคาดการณ์ (สีเขียว)"
+        elif news_item.is_actual_worse:
+            color_emoji, summary = "🔴", "แย่กว่าค่าคาดการณ์ (สีแดง)"
+        else:
+            color_emoji, summary = "⚪", "ตามคาด / ค่าปกติ (สีเทา)"
+
+        return "\n".join(
+            [
+                f"📰 [ผลข่าวจริงออกแล้ว] [{news_item.country}] {news_item.title}",
+                f"⏰ เวลาออก: {news_item.time_str}",
+                "=" * 26,
+                f"📌 ค่าจริง (Actual):   {color_emoji} {actual}",
+                f"📈 คาดการณ์ (Forecast): {forecast}",
+                f"📉 ก่อนหน้า (Previous): {previous}",
+                f"🧭 สรุป: {summary}",
+                "=" * 26,
+            ]
+        )
+
+    @staticmethod
+    def _flex_baseline_row(
+        label: str, value: str, value_color: Optional[str] = None, value_size: str = "lg"
+    ) -> Dict:
+        """สร้าง Box แนว Baseline (หัวข้อซ้าย, ค่าชิดขวา) สำหรับ Flex Message"""
+        return {
+            "type": "box",
+            "layout": "baseline",
+            "margin": "md",
+            "contents": [
+                {"type": "text", "text": label, "flex": 1, "size": "sm", "color": "#AAAAAA"},
+                {
+                    "type": "text",
+                    "text": value,
+                    "flex": 2,
+                    "size": value_size,
+                    "weight": "bold",
+                    "color": value_color or "#FFFFFF",
+                    "align": "end",
+                    "wrap": True,
+                },
+            ],
+        }
+
+    def build_release_alert_flex(self, news_item: ForexNewsItem) -> Tuple[str, Dict]:
+        """
+        สร้าง Flex Message สำหรับแจ้งเตือนผลข่าวจริง
+        ตัวเลข 'ค่าจริง (Actual)' จะเป็นสีจริงตามผลข่าว:
+        - 🟢 สีเขียว #00C853  -> ดีกว่าค่าคาดการณ์
+        - 🔴 สีแดง #F44336   -> แย่กว่าค่าคาดการณ์
+        - ⚪ สีเทา #E5E7EB   -> เท่าคาด / ค่าปกติ
+
+        :return: (alt_text, flex_contents) โดย alt_text คือข้อความตัวอย่างในหน้าคุยถ้าไม่รองรับ Flex
+        """
+        actual = news_item.actual or "-"
+        forecast = news_item.forecast or "-"
+        previous = news_item.previous or "-"
+
+        if news_item.is_actual_better:
+            actual_color = "#00C853"
+            summary_text = "ดีกว่าค่าคาดการณ์ 🟢"
+        elif news_item.is_actual_worse:
+            actual_color = "#F44336"
+            summary_text = "แย่กว่าค่าคาดการณ์ 🔴"
+        else:
+            actual_color = "#E5E7EB"
+            summary_text = "ตามคาด / ค่าปกติ ⚪"
+
+        alt_text = (
+            f"[ผลข่าวจริง] [{news_item.country}] {news_item.title} | "
+            f"ค่าจริง: {actual} | คาดการณ์: {forecast}"
+        )
+
+        contents: Dict = {
+            "type": "bubble",
+            "header": {
+                "type": "box",
+                "layout": "vertical",
+                "backgroundColor": "#1F2937",
+                "contents": [
+                    {"type": "text", "text": "📰 ผลข่าวจริงออกแล้ว", "size": "xs", "color": "#9CA3AF"},
+                    {
+                        "type": "text",
+                        "text": f"[{news_item.country}] {news_item.title}",
+                        "size": "md",
+                        "weight": "bold",
+                        "color": "#FFFFFF",
+                        "wrap": True,
+                        "margin": "sm",
+                    },
+                ],
+            },
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "backgroundColor": "#111827",
+                "contents": [
+                    self._flex_baseline_row("📌 ค่าจริง (Actual)", actual, actual_color),
+                    {"type": "separator", "margin": "md"},
+                    self._flex_baseline_row("📈 คาดการณ์", forecast, value_size="md"),
+                    self._flex_baseline_row("📉 ก่อนหน้า", previous, value_size="md"),
+                    {"type": "separator", "margin": "md"},
+                    {
+                        "type": "text",
+                        "text": f"🧭 {summary_text}",
+                        "size": "sm",
+                        "color": actual_color,
+                        "weight": "bold",
+                        "wrap": True,
+                        "margin": "md",
+                    },
+                ],
+            },
+            "footer": {
+                "type": "box",
+                "layout": "vertical",
+                "backgroundColor": "#1F2937",
+                "contents": [
+                    {
+                        "type": "text",
+                        "text": f"⏰ ออกเวลา: {news_item.time_str}  🔔 ส่งหลังข่าวออก {config.news.news_release_alert_delay_minutes} นาที",
+                        "size": "xs",
+                        "color": "#9CA3AF",
+                        "align": "center",
+                        "wrap": True,
+                    },
+                ],
+            },
+        }
+        return alt_text, contents
 
     def get_week_business_days(self, reference_date: Optional[datetime.date] = None) -> List[datetime.date]:
         """

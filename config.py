@@ -96,6 +96,14 @@ class NewsConfig:
     # สกุลเงินที่ต้องการแจ้งเตือนใน LINE (คั่นด้วย , เช่น "USD,EUR") ค่าเริ่มต้นเฉพาะ USD
     # อ่านผ่าน _get_secret เพื่อให้ตั้งค่าใน Streamlit Secrets ได้ด้วย
     weekly_alert_currencies: str = field(default_factory=lambda: _get_secret("WEEKLY_ALERT_CURRENCIES", "USD"))
+    # คำเตือนห้ามเทรดช่วงเริ่ม London Session (14:00 น. เวลาไทย) ในวันที่มีข่าวสีแดง
+    # - ตลาดจะ Sideway ตั้งแต่ 14:00 จนถึงเวลาข่าวจริงออก โอกาสแพ้สูง -> ส่งเตือนให้รอข่าวจริงก่อนเข้าเทรด
+    london_alert_enabled: bool = field(default_factory=lambda: os.getenv("LONDON_ALERT_ENABLED", "true").lower() == "true")
+    london_alert_time: str = field(default_factory=lambda: os.getenv("LONDON_ALERT_TIME", "14:00"))  # เวลาส่งเตือน (เวลาไทย)
+    # แจ้งเตือนผลข่าวจริง (Actual) หลังข่าวแดงออกแล้ว delay นาที
+    # - ส่งเป็น Flex Message ที่ตัวเลขค่าจริงเป็นสีเขียว (ดีกว่าคาด) / แดง (แย่กว่าคาด) / เทา (ปกติ)
+    news_release_alert_enabled: bool = field(default_factory=lambda: os.getenv("NEWS_RELEASE_ALERT_ENABLED", "true").lower() == "true")
+    news_release_alert_delay_minutes: int = field(default_factory=lambda: int(os.getenv("NEWS_RELEASE_ALERT_DELAY_MINUTES", "5")))
 
 
 @dataclass(frozen=True)

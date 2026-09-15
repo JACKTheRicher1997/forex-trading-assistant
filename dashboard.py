@@ -230,6 +230,28 @@ def drop_last_open_candle(df) -> object:
     return df
 
 
+def seconds_to_next_candle(tf: str) -> int:
+    """
+    คำนวณจำนวนวินาทีที่เหลือจนถึงแท่งเทียนแท่งถัดไปจะปิด
+    เพื่อให้เว็บรีเฟรซพอดีตอนแท่งปิด -> ค่า EMA Distance ตรงกับข้อมูลจริงล่าสุดเสมอ
+    เผื่อเวลา +5 วินาทีให้ Yahoo Finance อัปเดตแท่งใหม่แล้วค่อย rerun
+    """
+    now = datetime.datetime.now()
+    tf_sec = {"M5": 300, "M15": 900, "H1": 3600}.get(tf)
+    if tf == "D1":
+        nxt = (now + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        return max(15, int((nxt - now).total_seconds()) + 5)
+    if tf == "H4":
+        elapsed = (now.hour % 4) * 3600 + now.minute * 60 + now.second
+        tf_sec = 14400
+    elif tf_sec is not None:
+        elapsed = (now.minute % (tf_sec // 60)) * 60 + now.second
+    else:
+        tf_sec = 300
+        elapsed = (now.minute % 5) * 60 + now.second
+    return max(15, tf_sec - elapsed + 5)
+
+
 def countdown_to_news(news_date_local) -> str:
     """
     คำนวณเวลานับถอยหลังก่อนข่าวออก (เฉพาะข่าวที่ยังไม่ถึงเวลา):
@@ -443,14 +465,15 @@ with st.sidebar:
                 st.error("ส่งไม่สำเร็จ")
 
     st.markdown("---")
-    auto_refresh = st.checkbox("🔄 รีเฟรชหน้าจออัตโนมัติ (ทุก 30 วินาที)", value=False)
+    auto_refresh = st.checkbox("🔄 รีเฟรชเองอัตโนมัติ (ตรงเมื่อแท่งเทียนปิด)", value=False)
     if auto_refresh:
-        # Streamlit rerun ทุก 30 วินาที
-        st.info("โหมด Auto-refresh เปิดใช้งาน")
+        wait_sec = seconds_to_next_candle(selected_tf)
+        st.info(
+            f"โหมด Auto-refresh เปิดใช้งาน — จะรีเฟรชหน้าอัตโนมัติทุก ~{wait_sec} วินาที "
+            f"(พอดีกับแท่ง {selected_tf} ปิด) ค่า EMA Distance จะตรงกับข้อมูลจริงเสมอ"
+        )
         st.markdown(
-            """
-            <meta http-equiv="refresh" content="30">
-            """,
+            f'<meta http-equiv="refresh" content="{wait_sec}">',
             unsafe_allow_html=True,
         )
 

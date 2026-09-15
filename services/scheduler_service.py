@@ -26,10 +26,14 @@ class AlertScheduler:
         self,
         news_job_callback: Callable[[], None],
         ema_check_callback: Callable[[], None],
+        london_alert_callback: Optional[Callable[[], None]] = None,
+        release_alert_callback: Optional[Callable[[], None]] = None,
         check_interval_seconds: Optional[int] = None,
     ):
         self.news_job_callback = news_job_callback
         self.ema_check_callback = ema_check_callback
+        self.london_alert_callback = london_alert_callback
+        self.release_alert_callback = release_alert_callback
         self.check_interval_seconds = check_interval_seconds or config.poll_interval_seconds
         self._is_running = False
         self._thread: Optional[threading.Thread] = None
@@ -51,6 +55,17 @@ class AlertScheduler:
         else:
             schedule.every().monday.at(alert_time).do(self._safe_run_news_job)
 
+        # 2. คำเตือนห้ามเทรดช่วง London Session (14:00 น.) เฉพาะวันที่มีข่าวสีแดง
+        if config.news.london_alert_enabled and self.london_alert_callback is not None:
+            london_time = config.news.london_alert_time
+            logger.info(f"⏰ กำหนดตารางเตือนห้ามเทรดช่วง London Session: ทุกวัน เวลา {london_time} น. (เฉพาะวันที่มีข่าวแดง)")
+            schedule.every().day.at(london_time).do(self._safe_run_london_job)
+
+        # 3. ตรวจผลข่าวจริง (Actual) หลังข่าวแดงออก -- วนตรวจทุก 1 นาที (มี delay+dedup กันส่งซ้ำ)
+        if config.news.news_release_alert_enabled and self.release_alert_callback is not None:
+            logger.info(f"⏰ กำหนดตารางตรวจผลข่าวจริง: ทุก 1 นาที (ส่งหลังข่าวออก {config.news.news_release_alert_delay_minutes} นาที)")
+            schedule.every(1).minutes.do(self._safe_run_release_job)
+
     def _safe_run_news_job(self) -> None:
         """เรียกใช้งานฟังก์ชันส่งข่าวพร้อมดักจับ Exception"""
         logger.info("⏰ ถึงเวลาส่งสรุปข่าวประจำสัปดาห์ตามตารางนัดหมาย!")
@@ -58,6 +73,23 @@ class AlertScheduler:
             self.news_job_callback()
         except Exception as e:
             logger.error(f"เกิดข้อผิดพลาดในการรันงานสรุปข่าว: {e}", exc_info=True)
+
+    def _safe_run_london_job(self) -> None:
+        """เรียกใช้งานฟังก์ชันเตือน London Session พร้อมดักจับ Exception"""
+        logger.info("⏰ ถึงเวลาตรวจสอบคำเตือน London Session ตามกำหนดเวลา...")
+        try:
+            if self.london_alert_callback is not None:
+                self.london_alert_callback()
+        except Exception as e:
+            logger.error(f"เกิดข้อผิดพลาดในการรันงานเตือน London Session: {e}", exc_info=True)
+
+    def _safe_run_release_job(self) -> None:
+        """เรียกใช้งานฟังก์ชันตรวจผลข่าวจริง พร้อมดักจับ Exception"""
+        try:
+            if self.release_alert_callback is not None:
+                self.release_alert_callback()
+        except Exception as e:
+            logger.error(f"เกิดข้อผิดพลาดในการรันงานตรวจผลข่าวจริง: {e}", exc_info=True)
 
     def start_background(self) -> None:
         """เริ่มการทำงาน Scheduler ใน Background Thread"""

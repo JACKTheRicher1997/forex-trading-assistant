@@ -8,6 +8,7 @@ import sys
 import time
 import signal
 import argparse
+import datetime
 from typing import Optional
 
 # จัดการ UTF-8 สำหรับ Windows Console
@@ -51,9 +52,15 @@ class TradingAssistant:
         self.scheduler = AlertScheduler(
             news_job_callback=self.broadcast_weekly_news_alert,
             ema_check_callback=self.check_live_ema_cross,
+            london_alert_callback=self.broadcast_london_session_warning,
+            release_alert_callback=self.check_news_release_alerts,
         )
 
         self._is_running = False
+        # กันการส่งคำเตือน London Session ซ้ำในวันเดียวกัน (เช่น รันกระบวนการซ้ำ)
+        self._last_london_alert_date: Optional[datetime.date] = None
+        # กันการส่งแจ้งเตือนผลข่าวจริงซ้ำ (Key: วันที่|สกุลเงิน|ชื่อข่าว)
+        self._released_alerted: set = set()
 
     def initialize(self) -> bool:
         """เตรียมความพร้อมของระบบและตรวจสอบการเชื่อมต่อ"""
@@ -126,6 +133,93 @@ class TradingAssistant:
                 logger.error("❌ ส่งข้อความสรุปข่าวแดงประจำสัปดาห์ไม่สำเร็จ")
         except Exception as e:
             logger.error(f"เกิดข้อผิดพลาดขณะส่งสรุปข่าวประจำสัปดาห์: {e}", exc_info=True)
+
+    def broadcast_london_session_warning(self) -> None:
+        """
+        แจ้งเตือนห้ามเทรดช่วงเริ่ม London Session (เวลา 14:00 น. ตามค่าเริ่มต้น)
+        ส่งเข้า LINE เฉพาะวันที่มีข่าวสีแดง (High-Impact) เท่านั้น:
+
+        - ตลาด London จะ Sideway ตลอดช่วง 14:00 จนถึงเวลาข่าวจริงออก
+        - ห้ามเข้าเทรดช่วงดังกล่าว เพราะโอกาสแพ้สูงมาก
+        - ควรหยุดเทรด แล้วรอให้ข่าวจริงออกก่อน ค่อยเลือกทางเข้าตามเทรนด์ใหม่
+        """
+        today = datetime.datetime.now().date()
+        # เสาร์-อาทิตย์ ไม่มีตลาด ข้ามการแจ้งเตือน
+        if today.weekday() >= 5:
+            logger.debug("วันหยุดสุดสัปดาห์ ไม่ต้องแจ้งเตือน London Session")
+            return
+
+        # กันการส่งซ้ำในวันเดียวกันไว้กันพลาด
+        if self._last_london_alert_date == today:
+            logger.debug("ส่งคำเตือน London Session ไปแล้วในวันนี้ ข้าม")
+            return
+
+        logger.info("🔕 ตรวจสอบข่าวสีแดงวันนี้ เพื่อแจ้งเตือนห้ามเทรดช่วง London Session...")
+        try:
+            news_items = self.news_service.get_today_high_impact_news()
+            if not news_items:
+                logger.info("🟢 วันนี้ไม่มีข่าวสีแดง ไม่ต้องส่งคำเตือน London Session")
+                return
+
+            message = self.news_service.format_london_session_warning_message(news_items)
+            success = self.notifier.send_london_session_warning(message)
+            if success:
+                self._last_london_alert_date = today
+                logger.info("🔔 ส่งคำเตือนห้ามเทรดช่วง London Session (วันมีข่าวแดง) เรียบร้อยแล้ว")
+            else:
+                logger.error("❌ ส่งคำเตือน London Session ไม่สำเร็จ")
+        except Exception as e:
+            logger.error(f"เกิดข้อผิดพลาดในการส่งคำเตือน London Session: {e}", exc_info=True)
+
+    def check_news_release_alerts(self) -> None:
+        """
+        ตรวจผลข่าวจริง (Actual) ของข่าวแดงที่ออกแล้ว (ผ่านไป 5 นาที) ส่งเข้า LINE
+
+        Flex Message (LINE Messaging API) จะแสดงตัวเลขค่าจริงเป็นสีจริง:
+        - สีเขียว #00C853  -> ตัวเลขจริงดีกว่าค่าคาดการณ์
+        - สีแดง #F44336   -> ตัวเลขจริงแย่กว่าค่าคาดการณ์
+        - สีเทา #E5E7EB   -> ตามคาด / ค่าปกติ
+
+        ข้อความ Fallback (LINE Notify หรือ Messaging API Text):
+        จะแสดงสีเป็นอีโมจิ 🟢/🔴/⚪ แทน
+        """
+        today = datetime.datetime.now().date()
+        if today.weekday() >= 5:
+            return  # เสาร์-อาทิตย์ ไม่มีข่าวออก
+
+        # ล้าง dedup keys เก่ากว่า 7 วัน กันหน่วยความจำโต
+        cutoff_str = (today - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
+        self._released_alerted = {k for k in self._released_alerted if k.split("|", 1)[0] >= cutoff_str}
+
+        try:
+            items = self.news_service.get_released_news_for_alert()
+            if not items:
+                return
+
+            for item in items:
+                key = f"{item.date_local.strftime('%Y-%m-%d')}|{item.country}|{item.title}"
+                if key in self._released_alerted:
+                    continue
+
+                logger.info(
+                    f"🔔 ส่งแจ้งเตือนผลข่าวจริง: [{item.country}] {item.title} "
+                    f"(ค่าจริง: {item.actual}, คาด: {item.forecast})"
+                )
+                alt_text, flex_contents = self.news_service.build_release_alert_flex(item)
+                text_msg = self.news_service.format_release_alert_text(item)
+                success = self.notifier.send_news_release_alert(alt_text, flex_contents, text_msg)
+
+                if success:
+                    self._released_alerted.add(key)
+                    logger.info(
+                        f"✅ ส่งผลข่าวจริงสำเร็จ: [{item.country}] {item.title} "
+                        f"(ค่าจริง: {item.actual})"
+                    )
+                else:
+                    logger.error(f"❌ ส่งผลข่าวจริงไม่สำเร็จ: [{item.country}] {item.title}")
+
+        except Exception as e:
+            logger.error(f"เกิดข้อผิดพลาดในการตรวจผลข่าวจริง: {e}", exc_info=True)
 
     def start(self) -> None:
         """เริ่มการทำงานของระบบหลัก"""

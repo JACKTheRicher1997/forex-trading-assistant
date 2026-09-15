@@ -68,6 +68,47 @@ class LineNotifier:
             logger.error(f"❌ เกิดข้อผิดพลาดขณะส่ง LINE Notify: {e}")
             return False
 
+    def send_flex_message(self, alt_text: str, flex_contents: Dict[str, Any]) -> bool:
+        """
+        ส่งข้อความ Flex Message ผ่าน LINE Messaging API
+        :param alt_text: ข้อความสำรองที่แสดงในหน้าคุยถ้าไม่รองรับ Flex
+        :param flex_contents: JSON Body ของ Flex Message (Bubble/BubbleContainer)
+        :return: True หากส่งสำเร็จ
+        """
+        if not self.channel_access_token or not self.user_id:
+            logger.debug("ไม่ได้ตั้งค่า LINE_CHANNEL_ACCESS_TOKEN / LINE_USER_ID ข้ามการส่ง Flex")
+            return False
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.channel_access_token}",
+        }
+        payload: Dict[str, Any] = {
+            "to": self.user_id,
+            "messages": [
+                {
+                    "type": "flex",
+                    "altText": alt_text,
+                    "contents": flex_contents,
+                }
+            ],
+        }
+
+        try:
+            logger.info("กำลังส่งข้อความ Flex Message ผ่าน LINE Messaging API...")
+            response = requests.post(self.LINE_PUSH_API_URL, headers=headers, json=payload, timeout=10)
+            if response.status_code == 200:
+                logger.info("✅ ส่งข้อความ Flex Message สำเร็จ")
+                return True
+            else:
+                logger.error(
+                    f"❌ ส่ง Flex Message ล้มเหลว! รหัส HTTP: {response.status_code}, ข้อความ: {response.text}"
+                )
+                return False
+        except Exception as e:
+            logger.error(f"❌ เกิดข้อผิดพลาดขณะส่ง Flex Message: {e}")
+            return False
+
     def send_via_messaging_api(self, message: str) -> bool:
         """ส่งข้อความผ่าน LINE Messaging API (Push Message ไปยัง User ID)"""
         if not self.channel_access_token or not self.user_id:
@@ -225,6 +266,34 @@ class NotificationService:
         """ส่งการแจ้งเตือน Live EMA Cross ทันที"""
         logger.info("🔔 กำลังส่งการแจ้งเตือน Live EMA Cross...")
         return self.notifier.send(signal_message)
+
+    def send_london_session_warning(self, warning_message: str) -> bool:
+        """ส่งคำเตือนห้ามเทรดช่วงเริ่ม London Session ในวันที่มีข่าวสีแดง"""
+        logger.info("🔕 กำลังส่งคำเตือนห้ามเทรดช่วง London Session (วันมีข่าวแดง)...")
+        return self.notifier.send(warning_message)
+
+    def send_news_release_alert(
+        self, alt_text: str, flex_contents: Dict[str, Any], text_message: str
+    ) -> bool:
+        """
+        ส่งแจ้งเตือนผลข่าวจริง (Actual) หลังข่าวออกแล้ว:
+        1) ชอบส่ง Flex Message (ตัวเลขค่าจริงมีสีจริง 🟢🔴⚪) ผ่าน LINE Messaging API
+        2) ถ้าไม่มี Messaging API -> Fallback ส่งข้อความตัวอักษร (สีแสดงเป็นอีโมจิ) ผ่าน LINE Notify หรือ text push
+        """
+        # 1) Flex Message มีสีตัวหนังสือจริง ช่องทาง Messaging API
+        if self.notifier.channel_access_token and self.notifier.user_id:
+            if self.notifier.send_flex_message(alt_text, flex_contents):
+                return True
+
+        # 2) Fallback: LINE Notify รองรับแค่ข้อความตัวอักษร
+        if self.notifier.notify_token:
+            logger.info("🔔 กำลังส่งแจ้งเตือนผลข่าวจริงแบบข้อความ (Fallback) ผ่าน LINE Notify...")
+            success = self.notifier.send_via_line_notify(text_message)
+            return success
+
+        # 3) สุดท้าย: ส่งเป็นข้อความตัวอักษรธรรมดาผ่าน Messaging API
+        logger.info("🔔 กำลังส่งแจ้งเตือนผลข่าวจริงแบบข้อความผ่าน LINE Messaging API...")
+        return self.notifier.send(text_message)
 
     def send_test_message(self) -> bool:
         """ส่งข้อความทดสอบการเชื่อมต่อระบบแจ้งเตือน"""
