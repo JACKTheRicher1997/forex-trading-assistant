@@ -507,6 +507,19 @@ if df_rates is not None and len(df_rates) > 0:
 st.markdown("## 📊 1. สถานะอินดิเคเตอร์ & การตัดกันของ EMA (EMA Cross)")
 
 if signal_result:
+    # สรุปเวลาแท่งเทียนปิด (ICT) ที่เกิดการตัดกันล่าสุด — แสดงใต้แบนเนอร์เทรน
+    cross_occur = ""
+    if signal_result.cross_signal == CrossSignal.CROSS_UP:
+        cross_occur = (
+            f"🚀 เกิดการตัดขึ้น (CROSS UP) ในแท่งเทียนที่ปิด เวลา "
+            f"<b>{signal_result._format_candle_time_thai()}</b>"
+        )
+    elif signal_result.cross_signal == CrossSignal.CROSS_DOWN:
+        cross_occur = (
+            f"🔻 เกิดการตัดลง (CROSS DOWN) ในแท่งเทียนที่ปิด เวลา "
+            f"<b>{signal_result._format_candle_time_thai()}</b>"
+        )
+
     # Banner แสดงเทรนแบบเต็มความกว้างหน้าจอ
     if signal_result.is_bullish:
         st.markdown(
@@ -516,6 +529,7 @@ if signal_result:
                 <p style="margin: 5px 0 0 0; color: #a7f3d0; font-size: 1.1rem; font-weight: 500;">
                     ⏱️ Timeframe: {selected_tf} | EMA 50 อยู่เหนือ EMA 150 (โมเมนตัมขาขึ้น)
                 </p>
+                {('<p style="margin: 8px 0 0 0; color: #6ee7b7; font-size: 1rem;">' + cross_occur + '</p>') if cross_occur else ''}
             </div>
             """,
             unsafe_allow_html=True,
@@ -528,6 +542,7 @@ if signal_result:
                 <p style="margin: 5px 0 0 0; color: #fecaca; font-size: 1.1rem; font-weight: 500;">
                     ⏱️ Timeframe: {selected_tf} | EMA 50 อยู่ใต้ EMA 150 (โมเมนตัมขาลง)
                 </p>
+                {('<p style="margin: 8px 0 0 0; color: #fca5a5; font-size: 1rem;">' + cross_occur + '</p>') if cross_occur else ''}
             </div>
             """,
             unsafe_allow_html=True,
@@ -538,6 +553,7 @@ if signal_result:
             <div class="trend-neutral">
                 <h2 style="color: #94a3b8; margin:0; font-size: 1.8rem;">⚪ CURRENT TREND: NEUTRAL</h2>
                 <p style="margin: 5px 0 0 0;">⏱️ Timeframe: {selected_tf} | เส้น EMA กำลังเกาะกลุ่มกัน</p>
+                {('<p style="margin: 8px 0 0 0; font-size: 1rem;">' + cross_occur + '</p>') if cross_occur else ''}
             </div>
             """,
             unsafe_allow_html=True,
