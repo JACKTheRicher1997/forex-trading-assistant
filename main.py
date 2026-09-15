@@ -20,7 +20,7 @@ if sys.stdout and hasattr(sys.stdout, "reconfigure"):
 
 from logger import get_logger, AppLogger
 from config import config
-from services.price_service import create_price_service
+from services.price_service import PriceService, create_price_service
 from services.indicator_service import IndicatorService, CrossSignal
 from services.news_service import ForexFactoryNewsService
 from services.notifier import NotificationService
