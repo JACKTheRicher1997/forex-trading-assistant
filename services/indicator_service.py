@@ -248,78 +248,73 @@ class IndicatorService:
         )
 
     # ------------------------------------------------------------------
-    # analyze_live_cross(): สำหรับ GH Actions / Live Alert
-    # - สแกนทุกแท่งเทียนที่ดึงมา ไม่ใช่แค่ 2 แท่งล่าสุด
-    #   (กันพลาดเมื่อ GH Actions cron ถูกเลื่อน Queued ช้า → cross หลุดช่วง last-2)
-    # - ใช้ไฟล์ state ข้าม run ป้องกันส่งซ้ำ
-    # - แจ้งเตือนด้วยค่า ณ ตอนเกิด Cross (ไม่ใช่แท่งล่าสุด) — แก้ "ค่าไม่ตรง"
+    # analyze_live_crosses(): สำหรับ GH Actions / Live Alert
+    # - สแกนทุกแท่งเทียนที่ดึงมา (ต้องใช้ history เยอะ ~800 แท่ง ให้ EMA ล็อกเข้ารูป)
+    # - คืนค่า Cross ใหม่ทั้งหมด (ทุกครั้งที่ EMA50 ตัด EMA150) ไม่ใช่แค่ครั้งล่าสุด
+    # - ใช้ไฟล์ state ข้าม run กันส่งซ้ำ (แจ้งครั้งเดียวต่อแท่ง Cross)
+    # - แจ้งเตือนด้วยค่า ณ ตอนเกิด Cross (ไม่ใช่แท่งล่าสุด)
     # ------------------------------------------------------------------
-    def analyze_live_cross(
+    @staticmethod
+    def _parse_alerted_set(record) -> set:
+        """แปลง state record เป็น set ของ (candle_time_iso, signal)"""
+        result = set()
+        if not isinstance(record, dict):
+            return result
+        entries = record.get("alerted")
+        if isinstance(entries, list):
+            for e in entries:
+                if isinstance(e, dict) and e.get("candle_time") and e.get("signal"):
+                    result.add((str(e["candle_time"]), str(e["signal"])))
+        elif record.get("candle_time"):  # รูปแบบเก่า -> แปลงเป็นรายการเดียว
+            result.add((str(record["candle_time"]), str(record.get("signal", ""))))
+        return result
+
+    @staticmethod
+    def _prune_alerted(entries: list, now_utc: datetime.datetime) -> list:
+        """ตัดรายการที่แจ้งนานเกิน 3 วันแล้วออก กัน state โตเกินจำเป็น"""
+        cutoff = now_utc - datetime.timedelta(days=3)
+        out = []
+        for e in entries:
+            try:
+                if _to_aware_utc(e.get("candle_time")) >= cutoff:
+                    out.append(e)
+            except Exception:
+                continue
+        return out
+
+    def analyze_live_crosses(
         self,
         df: pd.DataFrame,
         symbol: str = "XAUUSDm",
         timeframe: str = "M5",
-    ) -> Optional[SignalResult]:
+    ) -> list:
         """
-        สแกนแท่งเทียนทั้งหมดเพื่อตรวจจับ Cross ล่าสุดที่ยังไม่เคยแจ้งเตือน
-        :return: SignalResult ที่ค่าตรงกับแท่ง Cross (ไม่ใช่แท่งล่าสุด)
+        สแกนแท่งเทียนทั้งหมด แล้วคืนค่า Cross ใหม่ทุกรายการที่ยังไม่เคยแจ้ง
+        (แจ้งครบทุกครั้งที่ EMA50 ตัด EMA150 ตลอดวัน — ไม่ใช่แค่ครั้งล่าสุด)
+        :return: List[SignalResult] เรียงตามเวลาก่อน -> หลัง
         """
         if df is None or len(df) < self.slow_period + 2:
-            return None
+            return []
 
         df_calc = self.calculate_ema(df)
         fast_col = f"ema_{self.fast_period}"
         slow_col = f"ema_{self.slow_period}"
 
-        # แปลงเป็น boolean: EMA50 > EMA150
         fast = df_calc[fast_col].astype(float)
         slow = df_calc[slow_col].astype(float)
         bullish = fast > slow
 
-        # สแกนหา Cross ทุกจุดที่มีสัญญาณเปลี่ยน (last_cross = ล่าสุดที่สุด)
-        cross_signal = CrossSignal.NONE
-        cross_idx = -1
+        # สแกนหา Cross ทุกจุดที่มีสัญญาณเปลี่ยน (เรียงเวลาขึ้นเรื่อย ๆ ตามลำดับ)
+        crosses = []
         prev_is_bull = bool(bullish.iloc[0])
         for i in range(1, len(df_calc)):
             cur_is_bull = bool(bullish.iloc[i])
             if cur_is_bull != prev_is_bull:
-                cross_signal = CrossSignal.CROSS_UP if cur_is_bull else CrossSignal.CROSS_DOWN
-                cross_idx = i
+                crosses.append((i, CrossSignal.CROSS_UP if cur_is_bull else CrossSignal.CROSS_DOWN))
             prev_is_bull = cur_is_bull
 
-        # ถ้าไม่พบ Cross → คืนค่าสถานะปัจจุบัน (cross=NONE, is_new=False) เพื่อ log/debug
-        if cross_idx == -1:
-            last_row = df_calc.iloc[-1]
-            curr_fast = float(last_row[fast_col])
-            curr_slow = float(last_row[slow_col])
-            current_trend = (
-                TrendState.BULLISH if curr_fast > curr_slow
-                else TrendState.BEARISH if curr_fast < curr_slow
-                else TrendState.NEUTRAL
-            )
-            return SignalResult(
-                symbol=symbol,
-                timeframe=timeframe,
-                candle_time=last_row["time"],
-                close_price=float(last_row["close"]),
-                ema_fast=curr_fast,
-                ema_slow=curr_slow,
-                trend=current_trend,
-                cross_signal=CrossSignal.NONE,
-                is_new_signal=False,
-            )
-
-        # ข้อมูล ณ จุด Cross (ไม่ใช่แท่งล่าสุด)
-        cross_row = df_calc.iloc[cross_idx]
-        cross_time = cross_row["time"]
-        cross_close = float(cross_row["close"])
-        cross_fast = float(cross_row[fast_col])
-        cross_slow = float(cross_row[slow_col])
-        cross_trend = (
-            TrendState.BULLISH if cross_fast > cross_slow
-            else TrendState.BEARISH if cross_fast < cross_slow
-            else TrendState.NEUTRAL
-        )
+        if not crosses:
+            return []
 
         # -----------------------------------------------------------
         # Persistent dedup (กันส่งซ้ำข้าม run / ข้าม process)
@@ -327,51 +322,66 @@ class IndicatorService:
         state_key = f"{symbol}::{timeframe}"
         state_entries = _load_cross_state()
         record = state_entries.get(state_key)
-        is_new = True
+        alerted_set = self._parse_alerted_set(record)
 
-        if record:
-            try:
-                alerted_time = _to_aware_utc(record.get("candle_time"))
-                this_cross_time = _to_aware_utc(cross_time)
-                # ถ้าเวลาแท่ง Cross ที่บันทึกไว้ >= แท่ง Cross ปัจจุบัน และสัญญาณตรงกัน
-                # = เคยแจ้งเตือนไปแล้ว
-                if (alerted_time >= this_cross_time
-                        and record.get("signal") == cross_signal.value):
-                    is_new = False
-            except Exception:
-                is_new = True  # ถ้าข้อมูล state เสีย ถือว่าเป็นสัญญาณใหม่
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        twenty4h_ago = now_utc - datetime.timedelta(hours=24)
 
-        if is_new:
-            # อัปเดตทั้งหน่วยความจำและไฟล์
-            self._last_alerted_candle_time = cross_time
-            self._last_alerted_signal_type = cross_signal
-            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-            cross_time_iso = _to_aware_utc(cross_time).isoformat()
+        results = []          # Cross ใหม่ที่จะแจ้ง (เรียงเวลาก่อน->หลัง)
+        new_entries = []      # รายการ (candle_time_iso, signal) ที่แจ้งไปแล้วรอบนี้
+
+        for idx, cross_signal in crosses:
+            cross_row = df_calc.iloc[idx]
+            cross_time = cross_row["time"]
+            cross_utc = _to_aware_utc(cross_time)
+
+            # แจ้งเฉพาะ Cross ที่เพิ่งเกิด (~24 ชม.) ป้องกัน replay ย้อนหลังไกล ๆ
+            if cross_utc < twenty4h_ago:
+                continue
+
+            entry_id = (cross_utc.isoformat(), cross_signal.value)
+            if entry_id in alerted_set:
+                continue  # เคยแจ้งแล้ว
+
+            results.append(SignalResult(
+                symbol=symbol,
+                timeframe=timeframe,
+                candle_time=cross_time,
+                close_price=float(cross_row["close"]),
+                ema_fast=float(cross_row[fast_col]),
+                ema_slow=float(cross_row[slow_col]),
+                trend=(
+                    TrendState.BULLISH if float(cross_row[fast_col]) > float(cross_row[slow_col])
+                    else TrendState.BEARISH if float(cross_row[fast_col]) < float(cross_row[slow_col])
+                    else TrendState.NEUTRAL
+                ),
+                cross_signal=cross_signal,
+                is_new_signal=True,
+            ))
+            new_entries.append({"candle_time": cross_utc.isoformat(), "signal": cross_signal.value})
+
+        # บันทึก state ถ้ามี Cross ใหม่
+        if new_entries:
+            existing_entries = record.get("alerted") if isinstance(record, dict) and isinstance(record.get("alerted"), list) else []
+            # ถ้า record เป็นรูปแบบเก่าให้เริ่มจากรายการเดียว
+            if not existing_entries and isinstance(record, dict) and record.get("candle_time"):
+                existing_entries = [{"candle_time": record["candle_time"], "signal": record.get("signal", "")}]
+            merged = existing_entries + new_entries
+            merged = self._prune_alerted(merged, now_utc)
             _save_cross_state({
                 state_key: {
-                    "candle_time": cross_time_iso,
-                    "signal": cross_signal.value,
-                    "detected_at": now_iso,
+                    "alerted": merged,
+                    "updated_at": now_utc.isoformat(),
                 }
             })
-            logger.info(
-                f"🔥 ตรวจพบสัญญาณ Live Cross ใหม่! {cross_signal.value} บน "
-                f"{symbol} {timeframe} เวลาแท่งเทียน: {cross_time}"
-            )
-        else:
-            logger.debug(
-                f"สัญญาณ {cross_signal.value} ในแท่งเทียน {cross_time} "
-                f"ถูกส่งแจ้งเตือนไปแล้ว (ข้ามการส่งซ้ำ — persistent dedup)"
-            )
+            # อัปเดตหน่วยความจำ (กันส่งซ้ำใน process เดียวกันด้วย)
+            latest_idx, latest_signal = crosses[-1]
+            self._last_alerted_candle_time = df_calc.iloc[latest_idx]["time"]
+            self._last_alerted_signal_type = latest_signal
+            for r in results:
+                logger.info(
+                    f"🔥 ตรวจพบสัญญาณ Live Cross ใหม่! {r.cross_signal.value} บน "
+                    f"{symbol} {timeframe} เวลาแท่งเทียน: {r.candle_time}"
+                )
 
-        return SignalResult(
-            symbol=symbol,
-            timeframe=timeframe,
-            candle_time=cross_time,
-            close_price=cross_close,
-            ema_fast=cross_fast,
-            ema_slow=cross_slow,
-            trend=cross_trend,
-            cross_signal=cross_signal,
-            is_new_signal=is_new,
-        )
+        return results

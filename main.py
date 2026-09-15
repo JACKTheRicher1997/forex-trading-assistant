@@ -94,8 +94,10 @@ class TradingAssistant:
         if timeframe != "M5":
             return
 
-        # ดึงข้อมูลแท่งเทียนย้อนหลัง
-        df = self.price_service.get_rates(count=300)
+        # ดึงข้อมูลแท่งเทียนย้อนหลัง (800 แท่ง = ประมาณ 1 สัปดาห์ M5)
+        # ต้องใช้ history เยอะพอให้ EMA50/EMA150 ล็อกเข้ารูปก่อนวิเคราะห์
+        # ถ้าใช้แค่ 300 แท่ง EMA ยังเพี้ยนช่วง warm-up -> นับ Cross ไม่ครบต่างจาก MT5
+        df = self.price_service.get_rates(count=800)
         if df is None or len(df) == 0:
             logger.warning(f"ไม่สามารถดึงแท่งเทียนสำหรับ {symbol} ({timeframe}) เพื่อตรวจ EMA Cross ได้")
             return
@@ -116,22 +118,19 @@ class TradingAssistant:
             if still_forming:
                 df = df.iloc[:-1].reset_index(drop=True)
 
-        # คำนวณและวิเคราะห์อินดิเคเตอร์
-        result = self.indicator_service.analyze_live_cross(df, symbol=symbol, timeframe=timeframe)
-        if result is None:
-            return
-
-        logger.debug(
-            f"[{symbol} {timeframe}] Close: {result.close_price:.2f} | "
-            f"EMA50: {result.ema_fast:.2f} | EMA150: {result.ema_slow:.2f} | "
-            f"Trend: {result.trend.value} | Cross: {result.cross_signal.value}"
-        )
-
-        # ตรวจสอบว่าเกิดสัญญาณตัดกันใหม่หรือไม่
-        if result.is_new_signal and result.cross_signal != CrossSignal.NONE:
-            message = result.format_line_alert_message()
-            logger.info(f"🔥 ส่งการแจ้งเตือน Live EMA Signal ({result.cross_signal.value}) ไปยัง LINE!")
-            self.notifier.send_live_ema_cross_alert(message)
+        # คำนวณและวิเคราะห์อินดิเคเตอร์ — ได้ทุก Cross ใหม่ (ไม่ใช่แค่ครั้งล่าสุด)
+        results = self.indicator_service.analyze_live_crosses(df, symbol=symbol, timeframe=timeframe)
+        for result in results:
+            logger.debug(
+                f"[{symbol} {timeframe}] Close: {result.close_price:.2f} | "
+                f"EMA50: {result.ema_fast:.2f} | EMA150: {result.ema_slow:.2f} | "
+                f"Trend: {result.trend.value} | Cross: {result.cross_signal.value}"
+            )
+            # ตรวจสอบว่าเกิดสัญญาณตัดกันใหม่หรือไม่ (ทุกครั้ง — ครบทุก Cross ของวัน)
+            if result.is_new_signal and result.cross_signal != CrossSignal.NONE:
+                message = result.format_line_alert_message()
+                logger.info(f"🔥 ส่งการแจ้งเตือน Live EMA Signal ({result.cross_signal.value}) ไปยัง LINE!")
+                self.notifier.send_live_ema_cross_alert(message)
 
     def broadcast_weekly_news_alert(self) -> None:
         """
