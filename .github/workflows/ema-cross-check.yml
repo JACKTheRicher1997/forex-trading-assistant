@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency: ema-cross-check
+    permissions:
+      contents: write
     env:
       LINE_NOTIFY_TOKEN: ${{ secrets.LINE_NOTIFY_TOKEN }}
       LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
@@ -36,3 +38,18 @@ jobs:
 
       - name: Run EMA cross check
         run: python main.py --check-ema-now
+
+      # บันทึกสถานะ "สัญญาณที่แจ้งเตือนแล้ว" กลับขึ้น GitHub repo
+      # เพราะตัวรัน (runner) เป็นแบบ ephemeral หน่วยความจำหายทุกครั้ง
+      # ถ้าไม่ commit กลับ ระบบจะส่งสัญญาณซ้ำทุกๆ 5 นาที
+      - name: Persist EMA cross state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update EMA cross state (bot)"
+            git push
+          else
+            echo "ไม่มีสถานะใหม่ — ไม่ต้อง commit"
+          fi

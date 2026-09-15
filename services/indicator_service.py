@@ -5,16 +5,66 @@ Indicator Service Module
 พร้อมระบบป้องกันการแจ้งเตือนซ้ำต่อแท่งเทียน
 """
 
+import json
+import threading
+import datetime
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Tuple
-import datetime
+from pathlib import Path
+from typing import Optional
+
 import pandas as pd
 
 from logger import get_logger
 from config import config
 
 logger = get_logger("IndicatorService")
+
+# ---------------------------
+# Persistent Cross State (dedup ข้ามรอบการทำงาน / ข้าม GH Actions run)
+# เพราะ GitHub Actions สร้าง Process ใหม่ทุกครั้ง (5 นาที) หน่วยความจำในตัว
+# IndicatorService จะรีเซ็ตทุก run -> ต้องเก็บสถานะ "แจ้งเตือนไปแล้ว" ไว้ในไฟล์
+# เพื่อกันส่งซ้ำข้าม run และกันพลาดสัญญาณที่ถูกสแกนย้อนหลัง
+# ---------------------------
+_STATE_DIR = Path(__file__).resolve().parent.parent / "state"
+_STATE_FILE = _STATE_DIR / "ema_cross_state.json"
+_state_write_lock = threading.Lock()
+
+
+def _to_aware_utc(ts) -> datetime.datetime:
+    """แปลงเวลาให้เป็น timezone-aware UTC เสมอ เพื่อเปรียบเทียบกันได้อย่างถูต้อง"""
+    if isinstance(ts, str):
+        ts = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=datetime.timezone.utc)
+    return ts.astimezone(datetime.timezone.utc)
+
+
+def _load_cross_state() -> dict:
+    """โหลดสถานะสัญญาณที่เคยแจ้งเตือนไปแล้วจากไฟล์ state"""
+    try:
+        if _STATE_FILE.exists():
+            with open(_STATE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            entries = data.get("entries", {})
+            if isinstance(entries, dict):
+                return entries
+    except Exception as e:
+        logger.warning(f"ไม่สามารถอ่านไฟล์ state EMA Cross ได้ (จะเริ่มจากสถานะว่าง): {e}")
+    return {}
+
+
+def _save_cross_state(entries_to_update: dict) -> None:
+    """อัปเดตสถานะสัญญาณที่แจ้งเตือนแล้วลงไฟล์ state (merge กับข้อมูลเดิม)"""
+    with _state_write_lock:
+        try:
+            _STATE_DIR.mkdir(parents=True, exist_ok=True)
+            disk = _load_cross_state()
+            disk.update(entries_to_update)
+            with open(_STATE_FILE, "w", encoding="utf-8") as f:
+                json.dump({"version": 1, "entries": disk}, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"ไม่สามารถบันทึกไฟล์ state EMA Cross ได้: {e}")
 
 
 class TrendState(Enum):
@@ -50,11 +100,20 @@ class SignalResult:
     def is_bearish(self) -> bool:
         return self.trend == TrendState.BEARISH
 
+    def _format_candle_time_thai(self) -> str:
+        """แปลงเวลาแท่งเทียนเป็นเวลาไทย (ICT UTC+7) สำหรับแสดงในข้อความ LINE"""
+        ts = self.candle_time
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=datetime.timezone.utc)
+        utc_ts = ts.astimezone(datetime.timezone.utc)
+        bangkok_ts = utc_ts + datetime.timedelta(hours=7)
+        return bangkok_ts.strftime("%Y-%m-%d %H:%M น.")
+
     def format_line_alert_message(self) -> str:
         """
         จัดรูปแบบข้อความแจ้งเตือนเข้า LINE ทันทีเมื่อเกิดการตัดกัน
         """
-        time_str = self.candle_time.strftime("%Y-%m-%d %H:%M น.")
+        time_str = self._format_candle_time_thai()
         spread_ema = abs(self.ema_fast - self.ema_slow)
 
         if self.cross_signal == CrossSignal.CROSS_UP:
@@ -124,6 +183,9 @@ class IndicatorService:
         )
         return df
 
+    # ------------------------------------------------------------------
+    # analyze(): สำหรับ Dashboard ยังคงเดิม — แสดงสถานะล่าสุดของแท่งเทียนล่าสุด
+    # ------------------------------------------------------------------
     def analyze(
         self,
         df: pd.DataFrame,
@@ -132,10 +194,7 @@ class IndicatorService:
     ) -> Optional[SignalResult]:
         """
         วิเคราะห์แท่งเทียนล่าสุดเพื่อตรวจจับการตัดกันของ EMA (Cross Detection)
-        :param df: DataFrame แท่งเทียน
-        :param symbol: สัญลักษณ์คู่เงิน
-        :param timeframe: กรอบเวลา
-        :return: SignalResult
+        ใช้สำหรับ Dashboard — แสดงสถานะล่าสุดของแท่งเทียนล่าสุดเท่านั้น
         """
         if df is None or len(df) < self.slow_period + 2:
             return None
@@ -144,7 +203,6 @@ class IndicatorService:
         fast_col = f"ema_{self.fast_period}"
         slow_col = f"ema_{self.slow_period}"
 
-        # ตรวจสอบแท่งเทียนล่าสุด (index -1) และแท่งก่อนหน้า (index -2)
         curr_row = df_calc.iloc[-1]
         prev_row = df_calc.iloc[-2]
 
@@ -152,11 +210,9 @@ class IndicatorService:
         curr_close = float(curr_row["close"])
         curr_fast = float(curr_row[fast_col])
         curr_slow = float(curr_row[slow_col])
-
         prev_fast = float(prev_row[fast_col])
         prev_slow = float(prev_row[slow_col])
 
-        # กำหนด Trend ปัจจุบัน
         if curr_fast > curr_slow:
             current_trend = TrendState.BULLISH
         elif curr_fast < curr_slow:
@@ -164,30 +220,20 @@ class IndicatorService:
         else:
             current_trend = TrendState.NEUTRAL
 
-        # ตรวจสอบการตัดกัน (Cross Detection)
         cross_signal = CrossSignal.NONE
-
-        # 1. EMA 50 ตัดขึ้นเหนือ EMA 150 (Golden Cross)
         if prev_fast <= prev_slow and curr_fast > curr_slow:
             cross_signal = CrossSignal.CROSS_UP
-
-        # 2. EMA 50 ตัดลงใต้ EMA 150 (Death Cross)
         elif prev_fast >= prev_slow and curr_fast < curr_slow:
             cross_signal = CrossSignal.CROSS_DOWN
 
-        # ระบบป้องกันการแจ้งเตือนซ้ำ (ส่งเพียงครั้งเดียวต่อการตัดกันในแท่งเทียนนั้นๆ)
         is_new_signal = False
         if cross_signal != CrossSignal.NONE:
-            # ตรวจสอบว่าเคยแจ้งเตือนในแท่งเทียนเวลานี้ไปแล้วหรือยัง
             if self._last_alerted_candle_time != curr_time or self._last_alerted_signal_type != cross_signal:
                 is_new_signal = True
                 self._last_alerted_candle_time = curr_time
                 self._last_alerted_signal_type = cross_signal
-                logger.info(
-                    f"🔥 ตรวจพบสัญญาณ Live Cross ใหม่! {cross_signal.value} บน {symbol} {timeframe} เวลาแท่งเทียน: {curr_time}"
-                )
             else:
-                logger.debug(f"สัญญาณ {cross_signal.value} ในแท่งเทียน {curr_time} ถูกส่งแจ้งเตือนไปแล้ว (ข้ามการส่งซ้ำ)")
+                logger.debug(f"สัญญาณ {cross_signal.value} ในแท่งเทียน {curr_time} ถูกส่งแจ้งเตือนไปแล้ว")
 
         return SignalResult(
             symbol=symbol,
@@ -199,4 +245,133 @@ class IndicatorService:
             trend=current_trend,
             cross_signal=cross_signal,
             is_new_signal=is_new_signal,
+        )
+
+    # ------------------------------------------------------------------
+    # analyze_live_cross(): สำหรับ GH Actions / Live Alert
+    # - สแกนทุกแท่งเทียนที่ดึงมา ไม่ใช่แค่ 2 แท่งล่าสุด
+    #   (กันพลาดเมื่อ GH Actions cron ถูกเลื่อน Queued ช้า → cross หลุดช่วง last-2)
+    # - ใช้ไฟล์ state ข้าม run ป้องกันส่งซ้ำ
+    # - แจ้งเตือนด้วยค่า ณ ตอนเกิด Cross (ไม่ใช่แท่งล่าสุด) — แก้ "ค่าไม่ตรง"
+    # ------------------------------------------------------------------
+    def analyze_live_cross(
+        self,
+        df: pd.DataFrame,
+        symbol: str = "XAUUSDm",
+        timeframe: str = "M5",
+    ) -> Optional[SignalResult]:
+        """
+        สแกนแท่งเทียนทั้งหมดเพื่อตรวจจับ Cross ล่าสุดที่ยังไม่เคยแจ้งเตือน
+        :return: SignalResult ที่ค่าตรงกับแท่ง Cross (ไม่ใช่แท่งล่าสุด)
+        """
+        if df is None or len(df) < self.slow_period + 2:
+            return None
+
+        df_calc = self.calculate_ema(df)
+        fast_col = f"ema_{self.fast_period}"
+        slow_col = f"ema_{self.slow_period}"
+
+        # แปลงเป็น boolean: EMA50 > EMA150
+        fast = df_calc[fast_col].astype(float)
+        slow = df_calc[slow_col].astype(float)
+        bullish = fast > slow
+
+        # สแกนหา Cross ทุกจุดที่มีสัญญาณเปลี่ยน (last_cross = ล่าสุดที่สุด)
+        cross_signal = CrossSignal.NONE
+        cross_idx = -1
+        prev_is_bull = bool(bullish.iloc[0])
+        for i in range(1, len(df_calc)):
+            cur_is_bull = bool(bullish.iloc[i])
+            if cur_is_bull != prev_is_bull:
+                cross_signal = CrossSignal.CROSS_UP if cur_is_bull else CrossSignal.CROSS_DOWN
+                cross_idx = i
+            prev_is_bull = cur_is_bull
+
+        # ถ้าไม่พบ Cross → คืนค่าสถานะปัจจุบัน (cross=NONE, is_new=False) เพื่อ log/debug
+        if cross_idx == -1:
+            last_row = df_calc.iloc[-1]
+            curr_fast = float(last_row[fast_col])
+            curr_slow = float(last_row[slow_col])
+            current_trend = (
+                TrendState.BULLISH if curr_fast > curr_slow
+                else TrendState.BEARISH if curr_fast < curr_slow
+                else TrendState.NEUTRAL
+            )
+            return SignalResult(
+                symbol=symbol,
+                timeframe=timeframe,
+                candle_time=last_row["time"],
+                close_price=float(last_row["close"]),
+                ema_fast=curr_fast,
+                ema_slow=curr_slow,
+                trend=current_trend,
+                cross_signal=CrossSignal.NONE,
+                is_new_signal=False,
+            )
+
+        # ข้อมูล ณ จุด Cross (ไม่ใช่แท่งล่าสุด)
+        cross_row = df_calc.iloc[cross_idx]
+        cross_time = cross_row["time"]
+        cross_close = float(cross_row["close"])
+        cross_fast = float(cross_row[fast_col])
+        cross_slow = float(cross_row[slow_col])
+        cross_trend = (
+            TrendState.BULLISH if cross_fast > cross_slow
+            else TrendState.BEARISH if cross_fast < cross_slow
+            else TrendState.NEUTRAL
+        )
+
+        # -----------------------------------------------------------
+        # Persistent dedup (กันส่งซ้ำข้าม run / ข้าม process)
+        # -----------------------------------------------------------
+        state_key = f"{symbol}::{timeframe}"
+        state_entries = _load_cross_state()
+        record = state_entries.get(state_key)
+        is_new = True
+
+        if record:
+            try:
+                alerted_time = _to_aware_utc(record.get("candle_time"))
+                this_cross_time = _to_aware_utc(cross_time)
+                # ถ้าเวลาแท่ง Cross ที่บันทึกไว้ >= แท่ง Cross ปัจจุบัน และสัญญาณตรงกัน
+                # = เคยแจ้งเตือนไปแล้ว
+                if (alerted_time >= this_cross_time
+                        and record.get("signal") == cross_signal.value):
+                    is_new = False
+            except Exception:
+                is_new = True  # ถ้าข้อมูล state เสีย ถือว่าเป็นสัญญาณใหม่
+
+        if is_new:
+            # อัปเดตทั้งหน่วยความจำและไฟล์
+            self._last_alerted_candle_time = cross_time
+            self._last_alerted_signal_type = cross_signal
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            cross_time_iso = _to_aware_utc(cross_time).isoformat()
+            _save_cross_state({
+                state_key: {
+                    "candle_time": cross_time_iso,
+                    "signal": cross_signal.value,
+                    "detected_at": now_iso,
+                }
+            })
+            logger.info(
+                f"🔥 ตรวจพบสัญญาณ Live Cross ใหม่! {cross_signal.value} บน "
+                f"{symbol} {timeframe} เวลาแท่งเทียน: {cross_time}"
+            )
+        else:
+            logger.debug(
+                f"สัญญาณ {cross_signal.value} ในแท่งเทียน {cross_time} "
+                f"ถูกส่งแจ้งเตือนไปแล้ว (ข้ามการส่งซ้ำ — persistent dedup)"
+            )
+
+        return SignalResult(
+            symbol=symbol,
+            timeframe=timeframe,
+            candle_time=cross_time,
+            close_price=cross_close,
+            ema_fast=cross_fast,
+            ema_slow=cross_slow,
+            trend=cross_trend,
+            cross_signal=cross_signal,
+            is_new_signal=is_new,
         )

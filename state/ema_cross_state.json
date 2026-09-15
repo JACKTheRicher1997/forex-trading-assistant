@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "entries": {
+    "XAUUSDM::M5": {
+      "candle_time": "2026-09-15T07:25:00+00:00",
+      "signal": "CROSS_DOWN",
+      "detected_at": "2026-09-15T15:17:14.794690+00:00"
+    }
+  }
+}

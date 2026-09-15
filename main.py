@@ -117,7 +117,7 @@ class TradingAssistant:
                 df = df.iloc[:-1].reset_index(drop=True)
 
         # คำนวณและวิเคราะห์อินดิเคเตอร์
-        result = self.indicator_service.analyze(df, symbol=symbol, timeframe=timeframe)
+        result = self.indicator_service.analyze_live_cross(df, symbol=symbol, timeframe=timeframe)
         if result is None:
             return
 
