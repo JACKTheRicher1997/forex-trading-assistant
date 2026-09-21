@@ -318,9 +318,77 @@
         {
           "candle_time": "2026-09-20T21:10:00+00:00",
           "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-09-20T13:05:00+00:00",
+          "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-09-20T13:10:00+00:00",
+          "signal": "CROSS_DOWN"
+        },
+        {
+          "candle_time": "2026-09-20T13:20:00+00:00",
+          "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-09-20T13:30:00+00:00",
+          "signal": "CROSS_DOWN"
+        },
+        {
+          "candle_time": "2026-09-20T13:40:00+00:00",
+          "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-09-20T14:30:00+00:00",
+          "signal": "CROSS_DOWN"
+        },
+        {
+          "candle_time": "2026-09-20T14:35:00+00:00",
+          "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-09-20T14:45:00+00:00",
+          "signal": "CROSS_DOWN"
+        },
+        {
+          "candle_time": "2026-09-20T15:00:00+00:00",
+          "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-09-20T15:05:00+00:00",
+          "signal": "CROSS_DOWN"
+        },
+        {
+          "candle_time": "2026-09-20T18:20:00+00:00",
+          "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-09-20T18:40:00+00:00",
+          "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-09-20T19:05:00+00:00",
+          "signal": "CROSS_DOWN"
+        },
+        {
+          "candle_time": "2026-09-20T19:15:00+00:00",
+          "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-09-20T20:05:00+00:00",
+          "signal": "CROSS_DOWN"
+        },
+        {
+          "candle_time": "2026-09-20T20:10:00+00:00",
+          "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-09-20T20:20:00+00:00",
+          "signal": "CROSS_DOWN"
         }
       ],
-      "updated_at": "2026-09-21T08:19:29.102123+00:00"
+      "updated_at": "2026-09-21T11:20:56.513610+00:00"
     }
   }
 }
