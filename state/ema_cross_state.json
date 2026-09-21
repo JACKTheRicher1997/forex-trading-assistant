@@ -422,9 +422,25 @@
         {
           "candle_time": "2026-09-20T19:20:00+00:00",
           "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-09-20T19:40:00+00:00",
+          "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-09-20T19:45:00+00:00",
+          "signal": "CROSS_DOWN"
+        },
+        {
+          "candle_time": "2026-09-20T19:55:00+00:00",
+          "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-09-20T20:00:00+00:00",
+          "signal": "CROSS_DOWN"
         }
       ],
-      "updated_at": "2026-09-21T11:48:03.800610+00:00"
+      "updated_at": "2026-09-21T12:59:51.531356+00:00"
     }
   }
 }
