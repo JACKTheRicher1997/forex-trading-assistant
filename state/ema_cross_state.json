@@ -386,9 +386,41 @@
         {
           "candle_time": "2026-09-20T20:20:00+00:00",
           "signal": "CROSS_DOWN"
+        },
+        {
+          "candle_time": "2026-09-20T14:05:00+00:00",
+          "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-09-20T14:10:00+00:00",
+          "signal": "CROSS_DOWN"
+        },
+        {
+          "candle_time": "2026-09-20T14:20:00+00:00",
+          "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-09-20T14:25:00+00:00",
+          "signal": "CROSS_DOWN"
+        },
+        {
+          "candle_time": "2026-09-20T19:00:00+00:00",
+          "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-09-20T19:25:00+00:00",
+          "signal": "CROSS_DOWN"
+        },
+        {
+          "candle_time": "2026-09-20T19:35:00+00:00",
+          "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-09-20T20:15:00+00:00",
+          "signal": "CROSS_UP"
         }
       ],
-      "updated_at": "2026-09-21T11:20:56.513610+00:00"
+      "updated_at": "2026-09-21T11:35:22.411405+00:00"
     }
   }
 }
