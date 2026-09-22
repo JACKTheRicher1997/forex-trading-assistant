@@ -262,8 +262,8 @@ class IndicatorService:
     # ------------------------------------------------------------------
     # analyze_live_crosses(): สำหรับ GH Actions / Live Alert
     # - สแกนทุกแท่งเทียนที่ดึงมา (ต้องใช้ history เยอะ ~800 แท่ง ให้ EMA ล็อกเข้ารูป)
-    # - คืนค่า Cross ใหม่ทั้งหมด (ทุกครั้งที่ EMA50 ตัด EMA150) ไม่ใช่แค่ครั้งล่าสุด
-    # - ใช้ไฟล์ state ข้าม run กันส่งซ้ำ (แจ้งครั้งเดียวต่อแท่ง Cross)
+    # - แจ้งเฉพาะ "Cross ใหม่ล่าสุด" ที่เกิดหลัง anchor ตัวเดียว กันข้อความท่วมเป็นชุด
+    # - บันทึก Cross ที่พบทั้งหมดลงไฟล์ state (ข้ามช่วงที่ bot หยุด) ไม่เท replay ย้อนหลัง
     # - แจ้งเตือนด้วยค่า ณ ตอนเกิด Cross (ไม่ใช่แท่งล่าสุด)
     # ------------------------------------------------------------------
     @staticmethod
@@ -283,7 +283,7 @@ class IndicatorService:
 
     @staticmethod
     def _prune_alerted(entries: list, now_utc: datetime.datetime) -> list:
-        """ตัดรายการที่แจ้งนานเกิน 3 วันแล้วออก กัน state โตเกินจำเป็น"""
+        """ตัดรายการที่แจ้งนานเกิน 3 วันออกแล้ว กัน state โตเกินจำเป็น"""
         cutoff = now_utc - datetime.timedelta(days=3)
         out = []
         for e in entries:
@@ -294,6 +294,29 @@ class IndicatorService:
                 continue
         return out
 
+    @staticmethod
+    def _get_last_alerted_time(record) -> Optional[datetime.datetime]:
+        """อ่านเวลาแท่งเทียนล่าสุดที่เคยแจ้งเตือน (anchor) จาก state"""
+        if not isinstance(record, dict):
+            return None
+        entries = record.get("alerted")
+        times = []
+        if isinstance(entries, list):
+            for e in entries:
+                if isinstance(e, dict) and e.get("candle_time"):
+                    times.append(e["candle_time"])
+        elif record.get("candle_time"):
+            times.append(record["candle_time"])
+        if not times:
+            return None
+        aware = []
+        for t in times:
+            try:
+                aware.append(_to_aware_utc(t))
+            except Exception:
+                continue
+        return max(aware) if aware else None
+
     def analyze_live_crosses(
         self,
         df: pd.DataFrame,
@@ -301,9 +324,9 @@ class IndicatorService:
         timeframe: str = "M5",
     ) -> list:
         """
-        สแกนแท่งเทียนทั้งหมด แล้วคืนค่า Cross ใหม่ทุกรายการที่ยังไม่เคยแจ้ง
-        (แจ้งครบทุกครั้งที่ EMA50 ตัด EMA150 ตลอดวัน — ไม่ใช่แค่ครั้งล่าสุด)
-        :return: List[SignalResult] เรียงตามเวลาก่อน -> หลัง
+        สแกนแท่งเทียนทั้งหมด แล้วคืนค่า Cross ใหม่ล่าสุดที่ยังไม่เคยแจ้ง
+        (แจ้งครั้งละ 1 รายการเท่านั้น — Cross ล่าสุด เพื่อกันข้อความท่วมเป็นชุด)
+        :return: List[SignalResult] อย่างมาก 1 รายการ (Cross ล่าสุด)
         """
         if df is None or len(df) < self.slow_period + 2:
             return []
@@ -339,23 +362,27 @@ class IndicatorService:
         now_utc = datetime.datetime.now(datetime.timezone.utc)
         twenty4h_ago = now_utc - datetime.timedelta(hours=24)
 
-        results = []          # Cross ใหม่ที่จะแจ้ง (เรียงเวลาก่อน->หลัง)
-        new_entries = []      # รายการ (candle_time_iso, signal) ที่แจ้งไปแล้วรอบนี้
+        # anchor = เวลา Cross ล่าสุดที่เคยแจ้งเตือน/บันทึกไว้แล้ว
+        last_alerted_time = self._get_last_alerted_time(record)
 
+        # รวบรวมเฉพาะ Cross ที่เกิดใหม่จริง ๆ หลัง anchor (ไม่เท replay ย้อนหลัง)
+        candidates = []
         for idx, cross_signal in crosses:
             cross_row = df_calc.iloc[idx]
             cross_time = cross_row["time"]
             cross_utc = _to_aware_utc(cross_time)
 
-            # แจ้งเฉพาะ Cross ที่เพิ่งเกิด (~24 ชม.) ป้องกัน replay ย้อนหลังไกล ๆ
+            # พิจารณาเฉพาะ Cross ที่เพิ่งเกิด (~24 ชม.) ป้องกัน replay ไกล ๆ
             if cross_utc < twenty4h_ago:
                 continue
-
+            # ข้าม Cross ที่เก่ากว่าหรือเท่ากับ anchor (แจ้ง/บันทึกไปแล้ว)
+            if last_alerted_time is not None and cross_utc <= last_alerted_time:
+                continue
             entry_id = (cross_utc.isoformat(), cross_signal.value)
             if entry_id in alerted_set:
-                continue  # เคยแจ้งแล้ว
+                continue
 
-            results.append(SignalResult(
+            candidates.append(SignalResult(
                 symbol=symbol,
                 timeframe=timeframe,
                 candle_time=cross_time,
@@ -368,32 +395,50 @@ class IndicatorService:
                     else TrendState.NEUTRAL
                 ),
                 cross_signal=cross_signal,
-                is_new_signal=True,
+                is_new_signal=False,
             ))
-            new_entries.append({"candle_time": cross_utc.isoformat(), "signal": cross_signal.value})
 
-        # บันทึก state ถ้ามี Cross ใหม่
-        if new_entries:
-            existing_entries = record.get("alerted") if isinstance(record, dict) and isinstance(record.get("alerted"), list) else []
-            # ถ้า record เป็นรูปแบบเก่าให้เริ่มจากรายการเดียว
-            if not existing_entries and isinstance(record, dict) and record.get("candle_time"):
-                existing_entries = [{"candle_time": record["candle_time"], "signal": record.get("signal", "")}]
-            merged = existing_entries + new_entries
-            merged = self._prune_alerted(merged, now_utc)
-            _save_cross_state({
-                state_key: {
-                    "alerted": merged,
-                    "updated_at": now_utc.isoformat(),
-                }
-            })
-            # อัปเดตหน่วยความจำ (กันส่งซ้ำใน process เดียวกันด้วย)
-            latest_idx, latest_signal = crosses[-1]
-            self._last_alerted_candle_time = df_calc.iloc[latest_idx]["time"]
-            self._last_alerted_signal_type = latest_signal
-            for r in results:
-                logger.info(
-                    f"🔥 ตรวจพบสัญญาณ Live Cross ใหม่! {r.cross_signal.value} บน "
-                    f"{symbol} {timeframe} เวลาแท่งเทียน: {r.candle_time}"
-                )
+        if not candidates:
+            return []
 
+        # บันทึก Cross ที่พบทั้งหมดลง state (เลื่อน anchor ข้ามช่วงที่ bot หยุด)
+        # แล้วแจ้งเฉพาะ Cross "ใหม่ล่าสุด" ตัวเดียว กันข้อความท่วมเป็นชุด (burst)
+        new_entries = [
+            {"candle_time": _to_aware_utc(r.candle_time).isoformat(), "signal": r.cross_signal.value}
+            for r in candidates
+        ]
+        existing_entries = record.get("alerted") if isinstance(record, dict) and isinstance(record.get("alerted"), list) else []
+        # ถ้า record เป็นรูปแบบเก่าให้เริ่มจากรายการเดียว
+        if not existing_entries and isinstance(record, dict) and record.get("candle_time"):
+            existing_entries = [{"candle_time": record["candle_time"], "signal": record.get("signal", "")}]
+        merged = existing_entries + new_entries
+        merged = self._prune_alerted(merged, now_utc)
+        _save_cross_state({
+            state_key: {
+                "alerted": merged,
+                "updated_at": now_utc.isoformat(),
+            }
+        })
+
+        # อัปเดตหน่วยความจำ (กันส่งซ้ำใน process เดียวกันด้วย)
+        self._last_alerted_candle_time = _to_aware_utc(candidates[-1].candle_time)
+        self._last_alerted_signal_type = candidates[-1].cross_signal
+
+        # ยังไม่มีประวัติ anchor มาก่อน -> ตั้ง baseline ครั้งแรก โดยบันทึกแต่ไม่ส่ง
+        # (กันเท Cross ย้อนหลังมาแจ้งเป็นชุดตอนติดตั้งใหม่ / เปลี่ยนแหล่งข้อมูล)
+        if last_alerted_time is None:
+            logger.info(
+                f"📋 ตั้ง baseline EMA Cross ({symbol} {timeframe}): "
+                f"บันทึก {len(candidates)} สัญญาณย้อนหลัง โดยไม่ส่งแจ้งเตือน"
+            )
+            return []
+
+        # แจ้งเฉพาะ Cross ใหม่ล่าสุดตัวเดียวเท่านั้น
+        results = [candidates[-1]]
+        results[0].is_new_signal = True
+        if len(candidates) > 1:
+            logger.info(
+                f"⏸️ ข้าม Cross เก่ากว่า {len(candidates) - 1} รายการ "
+                f"(บันทึก baseline) เพื่อไม่ให้ข้อความท่วมเป็นชุด"
+            )
         return results
