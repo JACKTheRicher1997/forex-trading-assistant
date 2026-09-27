@@ -4,10 +4,6 @@
     "XAUUSDM::M5": {
       "alerted": [
         {
-          "candle_time": "2026-09-23T02:50:00+00:00",
-          "signal": "CROSS_DOWN"
-        },
-        {
           "candle_time": "2026-09-24T21:05:00+00:00",
           "signal": "CROSS_UP"
         },
@@ -30,9 +26,17 @@
         {
           "candle_time": "2026-09-26T00:00:00+00:00",
           "signal": "CROSS_DOWN"
+        },
+        {
+          "candle_time": "2026-09-27T06:50:00+00:00",
+          "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-09-27T06:55:00+00:00",
+          "signal": "CROSS_DOWN"
         }
       ],
-      "updated_at": "2026-09-26T00:50:08.966147+00:00"
+      "updated_at": "2026-09-27T07:02:46.632633+00:00"
     }
   }
 }
