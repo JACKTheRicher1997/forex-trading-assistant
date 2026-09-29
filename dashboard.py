@@ -296,6 +296,101 @@ def countdown_tag(news_date_local) -> str:
         pass
 
 
+def _resolve_app_tz():
+    """คืน (tzinfo, tz_name) ของเวลาที่ระบบตั้งไว้ (TIMEZONE) โดยมี fallback เป็น UTC+7"""
+    tz_name = getattr(config.news, "timezone", None) or "Asia/Bangkok"
+    try:
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(tz_name), tz_name
+    except Exception:
+        return datetime.timezone(datetime.timedelta(hours=7)), "Asia/Bangkok"
+
+
+def render_live_clock(symbol: str) -> None:
+    """
+    แสดงเวลาปัจจุบันตาม TIMEZONE ของระบบ (ค่าเริ่มต้นเวลาไทย ICT UTC+7) แบบเรียลไทม์
+    ให้ตัวเลขวินาทีเดินทุกวินาทีโดยไม่ต้องรีเฟรชหน้า
+    ใช้ st.html + JavaScript ฝังลงในหน้าเว็บตรง ๆ (ไม่ถูก iframe) จึงอัปเดตเองได้
+    ฝั่ง JS ต้องระบุ timeZone ด้วย ไม่งั้นจะกลายเป็นเวลาเครื่องผู้ใช้แทน
+    """
+    tz, tz_name = _resolve_app_tz()
+    initial = datetime.datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+    st.html(
+        f"""
+        <div class="live-clock" id="liveClockBox" data-symbol="{symbol}" data-tz="{tz_name}">
+            <span class="live-clock__dot"></span>
+            เวลาปัจจุบัน ({tz_name}): <span class="live-clock__time" id="liveClockTime">{initial}</span>
+            <span class="live-clock__sep">|</span>
+            สกุลเงินหลัก: <span class="live-clock__symbol" id="liveClockSymbol">{symbol}</span>
+        </div>
+        <style>
+            .live-clock {{
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 6px;
+                color: #8b9bb4;
+                font-size: 0.875rem;
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+                margin: -4px 0 8px 0;
+            }}
+            .live-clock__dot {{
+                width: 7px;
+                height: 7px;
+                border-radius: 50%;
+                background: #22c55e;
+                box-shadow: 0 0 8px rgba(34, 197, 94, 0.9);
+                animation: liveClockBlink 2s ease-in-out infinite;
+            }}
+            .live-clock__time {{
+                color: #e2e8f0;
+                font-weight: 600;
+                font-variant-numeric: tabular-nums;
+                letter-spacing: 0.3px;
+            }}
+            .live-clock__sep {{ opacity: 0.45; }}
+            .live-clock__symbol {{ color: #fbbf24; font-weight: 600; }}
+            @keyframes liveClockBlink {{
+                0%, 100% {{ opacity: 1; }}
+                50% {{ opacity: 0.25; }}
+            }}
+        </style>
+        <script>
+            (function () {{
+                const box = document.getElementById('liveClockBox');
+                const timeEl = document.getElementById('liveClockTime');
+                const symEl = document.getElementById('liveClockSymbol');
+                if (!box || !timeEl) return;
+                if (box.dataset.liveClockBound === '1') return;
+                box.dataset.liveClockBound = '1';
+
+                const tzName = box.dataset.tz || 'Asia/Bangkok';
+                const render = () => {{
+                    const parts = new Intl.DateTimeFormat('sv-SE', {{
+                        timeZone: tzName,
+                        year: 'numeric', month: '2-digit', day: '2-digit',
+                        hour: '2-digit', minute: '2-digit', second: '2-digit',
+                        hour12: false,
+                    }}).formatToParts(new Date());
+                    const get = (t) => (parts.find((p) => p.type === t) || {{}}).value || '00';
+                    timeEl.textContent =
+                        get('year') + '-' + get('month') + '-' + get('day') +
+                        ' ' + get('hour') + ':' + get('minute') + ':' + get('second');
+                    timeEl.title = new Date().toLocaleString();
+                }};
+                if (symEl && box.dataset.symbol) symEl.textContent = box.dataset.symbol;
+
+                render();
+                // เช็คทุก 200ms แล้วเขียนเฉพาะตอนวินาทีเปลี่ยน กัน drift และกันเขียนซ้ำ
+                setInterval(render, 200);
+            }})();
+        </script>
+        """,
+        unsafe_allow_javascript=True,
+    )
+
+
 def format_actual_with_color(item: ForexNewsItem) -> str:
     """
     จัดรูปแบบตัวเลขจริง (Actual) พร้อมสีตาม ForexFactory
@@ -487,7 +582,7 @@ with st.sidebar:
 # 4. Main Header & Top Status
 # ==========================================
 st.markdown("# 🚀 Forex Trading Assistant & Live Alert System")
-st.caption(f"เวลาปัจจุบัน (Local): {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | สกุลเงินหลัก: {selected_symbol}")
+render_live_clock(selected_symbol)
 
 # ดึงข้อมูลราคาจาก Yahoo Finance (ใช้ Cache เพื่อให้โหลดเร็วขึ้นเมื่อกลับมาดูซ้ำ)
 with st.spinner("กำลังดึงข้อมูลแท่งเทียนและคำนวณอินดิเคเตอร์..."):
