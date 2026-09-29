@@ -814,6 +814,104 @@ def _sr_panel_html(sr: dict) -> str:
     )
 
 
+def compute_atr(df, period: int = 14) -> Optional[float]:
+    """
+    คำนวณ Average True Range (ATR) แบบ Wilder Smoothing
+    ใช้เป็นตัววัดความผันผวนของราคาเพื่อกำหนด SL/TP ที่สมเหตุสมผล
+    """
+    if df is None or len(df) < period + 2:
+        return None
+    rows = df.dropna(subset=["high", "low", "close"])
+    if len(rows) < period + 2:
+        return None
+    highs = rows["high"].astype(float).tolist()
+    lows = rows["low"].astype(float).tolist()
+    closes = rows["close"].astype(float).tolist()
+
+    trs = []
+    for i in range(1, len(rows)):
+        tr = max(
+            highs[i] - lows[i],
+            abs(highs[i] - closes[i - 1]),
+            abs(lows[i] - closes[i - 1]),
+        )
+        trs.append(tr)
+    if len(trs) < period:
+        return None
+    atr = sum(trs[:period]) / period
+    for i in range(period, len(trs)):
+        atr = (atr * (period - 1) + trs[i]) / period
+    return atr
+
+
+def _plan_sl_tp_html(direction: str, price: float, atr: float, sr: dict) -> str:
+    """
+    สร้างแผน SL/TP อัตโนมัติจาก ATR (และแนวรับ/ต้านใกล้สุดเป็นตัวช่วย)
+    ค่าเริ่มต้น: SL = 1.5xATR, TP1 = 1.5xATR (R:R 1:1), TP2 = 3xATR (R:R 1:2)
+    ถ้าแนวต้าน/รับใกล้สุดอยู่ใกล้กว่า TP -> ใช้แนวนั้นเป็นเป้าแรก (สมจริงกว่า)
+    """
+    is_buy = direction == "BUY"
+    vm = 1 if is_buy else -1
+
+    sl_price = price - vm * 1.5 * atr
+    tp1_price = price + vm * 1.5 * atr
+    tp2_price = price + vm * 3.0 * atr
+
+    # รวมแนวรับ/ต้านใกล้สุดเข้ากับเป้าแรก
+    ref_note = ""
+    if is_buy and sr.get("nearest_resistance"):
+        nr = sr["nearest_resistance"]
+        if nr["price"] < tp1_price:
+            tp1_price = nr["price"]
+            ref_note = f"TP1 ปรับให้ตรงแนวต้านใกล้สุด {nr['label']} ${nr['price']:,.2f}"
+    if not is_buy and sr.get("nearest_support"):
+        ns = sr["nearest_support"]
+        if ns["price"] > tp1_price:
+            tp1_price = ns["price"]
+            ref_note = f"TP1 ปรับให้ตรงแนวรับใกล้สุด {ns['label']} ${ns['price']:,.2f}"
+
+    sl_dist = abs(price - sl_price)
+    tp1_dist = abs(tp1_price - price)
+    tp2_dist = abs(tp2_price - price)
+    rr1 = tp1_dist / sl_dist if sl_dist else 0
+    rr2 = tp2_dist / sl_dist if sl_dist else 0
+
+    def box(label, val, color, sub=""):
+        return (
+            f'<div style="flex:1 1 130px;min-width:130px;background:rgba(15,23,42,0.85);'
+            f'border:1px solid {color};border-radius:10px;padding:8px 10px;text-align:center;">'
+            f'<div style="font-size:0.7rem;color:#94a3b8;">{label}</div>'
+            f'<div style="font-size:1.15rem;font-weight:800;color:{color};">${val:,.2f}</div>'
+            f'{("<div style=font-size:0.72rem;color:#94a3b8;>" + sub + "</div>") if sub else ""}'
+            f'</div>'
+        )
+
+    arrow = "⇈ Buy" if is_buy else "⇊ Sell"
+    dir_color = "#10b981" if is_buy else "#ef4444"
+
+    cells = (
+        box("เข้าซื้อ/ขาย (Entry)", price, "#fbbf24", "ราคาปัจจุบัน")
+        + box("Stop Loss", sl_price, "#ef4444", f"{abs(sl_dist):,.2f} จากราคา")
+        + box("Take Profit 1", tp1_price, "#34d399", f"R:R 1:{rr1:.1f}")
+        + box("Take Profit 2", tp2_price, "#34d399", f"R:R 1:{rr2:.1f}")
+    )
+
+    return (
+        f'<div style="background:rgba(15,23,42,0.9);border:1px solid {dir_color};'
+        f'border-radius:14px;padding:16px 20px;margin:12px 0 6px 0;">'
+        f'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">'
+        f'<span style="font-size:1.15rem;font-weight:800;color:#f8fafc;">🎯 แผนการเทรด (SL/TP อัตโนมัติ)</span>'
+        f'<span style="font-size:1.3rem;font-weight:800;color:{dir_color};">{arrow}</span>'
+        f'</div>'
+        f'<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:stretch;">{cells}</div>'
+        f'<div style="margin-top:10px;color:#cbd5e1;font-size:0.9rem;">'
+        f'📊 ความผันผวน ATR({14}) = ${atr:,.2f} · ใช้ SL/TP ที่ {abs(1.5 * atr):,.2f} / {abs(3.0 * atr):,.2f} จุดจากราคา<br/>'
+        f'{"🎯 " + ref_note + "<br/>" if ref_note else ""}'
+        f'⚠️ แนะนำความเสี่ยงต่อออเดอร์ไม่เกิน <b>1-2%</b> ของเงินทุน และตรวจสอบข่าวแดง/โครงสร้างราคาก่อนเสมอ'
+        f'</div></div>'
+    )
+
+
 def render_html_table(rows: list, colors: list, actual_col: str, band_keys: list = None) -> str:
     """
     สร้าง HTML Table ที่อ่านง่าย ตัวเลขใหญ่ พอดีกับคอลัมน์
@@ -1304,6 +1402,7 @@ if df_ema_full is not None and len(df_ema_full) > 0:
 
         # เส้นแนวรับ/แนวต้านอัตโนมัติ (SR) ซ้อนบนกราฟ
         sr_info = compute_support_resistance(df_ema_full)
+        atr_value = compute_atr(df_ema_full)
         _lo = float(df_plot["low"].min()) * 0.995
         _hi = float(df_plot["high"].max()) * 1.005
         for lv in sr_info["levels"]:
@@ -1407,9 +1506,27 @@ if "mtf_results" in locals():
         unsafe_allow_html=True,
     )
 
-# 📏 แนวรับ/แนวต้านอัตโนมัติ — แสดงต่อจาก Verdict (ใช้ sr_info จากกราฟ Section 6)
-if "sr_info" in locals() and sr_info and sr_info["levels"]:
-    st.markdown(_sr_panel_html(sr_info), unsafe_allow_html=True)
+    # 📏 แนวรับ/แนวต้านอัตโนมัติ — แสดงต่อจาก Verdict (ใช้ sr_info จากกราฟ Section 6)
+    if "sr_info" in locals() and sr_info and sr_info["levels"]:
+        st.markdown(_sr_panel_html(sr_info), unsafe_allow_html=True)
+
+    # 🎯 แผน SL/TP อัตโนมัติจาก ATR — แสดงเฉพาะเมื่อ Verdict แนะนำเทรดได้จริง
+    _atrv = locals().get("atr_value") if "atr_value" in locals() else None
+    if _atrv and verdict["verdict"] in ("BUY", "SELL") and sr_info and sr_info["current_close"]:
+        st.markdown(
+            _plan_sl_tp_html(verdict["verdict"], sr_info["current_close"], _atrv, sr_info),
+            unsafe_allow_html=True,
+        )
+    elif _atrv:
+        # แม้ยังไม่แนะนำเทรด ก็ให้เห็นความผันผวนเพื่อวางแผนรอ
+        st.markdown(
+            f'<div style="background:rgba(15,23,42,0.8);border:1px solid #94a3b8;border-radius:12px;'
+            f'padding:12px 18px;margin:12px 0 6px 0;color:#cbd5e1;font-size:0.95rem;">'
+            f'📊 ความผันผวน ATR(14) = ${_atrv:,.2f} — ยังไม่แนะนำวางแผน SL/TP เพราะ Verdict = '
+            f'<b>{verdict["verdict"]}</b> รอสัญญาณชัดเจนก่อนเข้าออเดอร์'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
 # แท็บแสดง 3 มุมมองตามโจทย์: สรุปรายสัปดาห์, ดูแยกตามวัน, และ ปฏิทินรายเดือน
 tab_weekly, tab_daily, tab_calendar = st.tabs(
