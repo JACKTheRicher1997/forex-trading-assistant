@@ -1062,13 +1062,6 @@ if signal_result:
             unsafe_allow_html=True
         )
 
-    # 🎯 สรุปทิศทางเทรด (Trade Verdict) — ภาพรวมว่าเทรดไปทางไหน
-    verdict = compute_trade_verdict(mtf_results, selected_tf, red_news_this_week)
-    st.markdown(
-        _verdict_panel_html(verdict, countdown_to_news),
-        unsafe_allow_html=True,
-    )
-
 else:
     st.warning(
         "⚠️ ไม่สามารถดึงข้อมูลราคาได้ในขณะนี้ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตหรือลองใหม่ภายหลัง"
@@ -1196,6 +1189,15 @@ with kpi3:
         st.metric("สกุลเงินที่ได้รับผลกระทบสูงสุด", f"{top_curr} ({currencies.count(top_curr)} ข่าว)")
     else:
         st.metric("สกุลเงินที่ได้รับผลกระทบสูงสุด", "-")
+
+# 🎯 สรุปทิศทางเทรด (Trade Verdict) — ภาพรวมว่าเทรดไปทางไหน
+# (วางหลัง red_news_this_week ซึ่งมีข่าวแดงครบ + กรองสกุลเงินแล้ว)
+if "mtf_results" in locals():
+    verdict = compute_trade_verdict(mtf_results, selected_tf, red_news_this_week)
+    st.markdown(
+        _verdict_panel_html(verdict, countdown_to_news),
+        unsafe_allow_html=True,
+    )
 
 # แท็บแสดง 3 มุมมองตามโจทย์: สรุปรายสัปดาห์, ดูแยกตามวัน, และ ปฏิทินรายเดือน
 tab_weekly, tab_daily, tab_calendar = st.tabs(
