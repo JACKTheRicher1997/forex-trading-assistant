@@ -217,15 +217,15 @@ class IndicatorService:
         else:
             current_trend = TrendState.NEUTRAL
 
-        # หา Cross ล่าสุดภายในหน้าต่างข้อมูล (ไม่ใช่แค่แท่งสุดท้าย)
+        # หา Cross ล่าสุดภายในหน้าต่างข้อมูลทั้งหมด (ไม่ใช่แค่แท่งสุดท้าย)
         # เพื่อให้ Dashboard แสดง "สัญญาณล่าสุด" ตรงกับความเป็นจริงจนกว่าจะมี Cross ใหม่
+        # และไม่ให้สัญญาณหายไปเมื่อ Cross เก่านานกว่า 300 แท่ง (เช่น M5 ~25 ชม.)
         last_cross_signal = CrossSignal.NONE
         last_cross_time = None
         fast_arr = df_calc[fast_col].astype(float)
         slow_arr = df_calc[slow_col].astype(float)
-        scan_start = max(1, len(df_calc) - 300)
         prev_is_bull = bool(fast_arr.iloc[0] > slow_arr.iloc[0])
-        for i in range(scan_start, len(df_calc)):
+        for i in range(1, len(df_calc)):
             cur_is_bull = bool(fast_arr.iloc[i] > slow_arr.iloc[i])
             if cur_is_bull != prev_is_bull:
                 last_cross_signal = CrossSignal.CROSS_UP if cur_is_bull else CrossSignal.CROSS_DOWN

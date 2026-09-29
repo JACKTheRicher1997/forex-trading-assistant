@@ -296,6 +296,25 @@ def countdown_tag(news_date_local) -> str:
         pass
 
 
+def _candle_as_naive_utc(ts):
+    """แปลง timestamp แท่งเทียนให้เป็น naive UTC (เพื่อคิดระยะเวลาเทียบกับตอนนี้)"""
+    if ts.tzinfo is None:
+        return ts
+    return ts.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+
+
+def _fmt_duration(delta) -> str:
+    """จัดรูปแบบระยะเวลาต่อเนื่อง (เช่น '2 ชม. 5 นาที') ให้อ่านง่าย"""
+    total = max(0, int(delta.total_seconds()))
+    h, rem = divmod(total, 3600)
+    m = rem // 60
+    if h > 0:
+        return f"{h} ชม. {m} นาที"
+    if m > 0:
+        return f"{m} นาที"
+    return "ผ่านมาไม่ถึง 1 นาที"
+
+
 def _resolve_app_tz():
     """คืน (tzinfo, tz_name) ของเวลาที่ระบบตั้งไว้ (TIMEZONE) โดยมี fallback เป็น UTC+7"""
     tz_name = getattr(config.news, "timezone", None) or "Asia/Bangkok"
@@ -622,17 +641,20 @@ if df_rates is not None and len(df_rates) > 0:
 st.markdown("## 📊 1. สถานะอินดิเคเตอร์ & การตัดกันของ EMA (EMA Cross)")
 
 if signal_result:
-    # สรุปเวลาแท่งเทียนปิด (ICT) ที่เกิดการตัดกันล่าสุด — แสดงใต้แบนเนอร์เทรน
+    # สรุปเวลาแท่งเทียนปิด (ICT) ที่เกิดการตัดกันล่าสุด + ระยะเวลาที่ต่อเนื่องมาแล้ว
+    # แสดงใต้แบนเนอร์เทรน (หายไปเมื่อ analyze() หา Cross ล่าสุดไม่เจอ -> ต้องสแกนทั้งหน้าต่าง)
     cross_occur = ""
     if signal_result.cross_signal == CrossSignal.CROSS_UP:
         cross_occur = (
             f"🚀 เกิดการตัดขึ้น (CROSS UP) ในแท่งเทียนที่ปิด เวลา "
-            f"<b>{signal_result._format_candle_time_thai()}</b>"
+            f"<b>{signal_result._format_candle_time_thai()}</b> — "
+            f"ต่อเนื่องมาแล้ว {_fmt_duration(datetime.datetime.utcnow() - _candle_as_naive_utc(signal_result.candle_time))}"
         )
     elif signal_result.cross_signal == CrossSignal.CROSS_DOWN:
         cross_occur = (
             f"🔻 เกิดการตัดลง (CROSS DOWN) ในแท่งเทียนที่ปิด เวลา "
-            f"<b>{signal_result._format_candle_time_thai()}</b>"
+            f"<b>{signal_result._format_candle_time_thai()}</b> — "
+            f"ต่อเนื่องมาแล้ว {_fmt_duration(datetime.datetime.utcnow() - _candle_as_naive_utc(signal_result.candle_time))}"
         )
 
     # Banner แสดงเทรนแบบเต็มความกว้างหน้าจอ
