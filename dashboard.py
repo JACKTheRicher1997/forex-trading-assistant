@@ -169,23 +169,21 @@ st.markdown(
     .news-table tbody tr:last-child td {
         border-bottom: none;
     }
-    .news-detail { text-align: left; }
-    .news-detail summary {
-        cursor: pointer;
+    .news-tip {
+        cursor: help;
+        color: #e2e8f0;
+        font-weight: 500;
+    }
+    .news-tip:hover {
         color: #fbbf24;
-        font-weight: 600;
-        list-style-position: inside;
         text-decoration: underline dotted;
         text-underline-offset: 3px;
-        transition: color 0.15s ease;
     }
-    .news-detail summary:hover { color: #fcd34d; }
-    .news-detail__body {
-        display: block;
-        color: #cbd5e1;
-        font-size: 0.85rem;
-        line-height: 1.5;
-        padding: 6px 2px 2px 18px;
+    .news-tip__icon {
+        font-size: 0.8em;
+        opacity: 0.75;
+        margin-left: 2px;
+        vertical-align: middle;
     }
 
     /* Header styling */
@@ -521,14 +519,11 @@ _TITLE_COLUMN_KEYS = ("ชื่อข่าว", "ชื่อข่าวเ�
 
 
 def _news_title_html(title: str) -> str:
-    """ทำให้ชื่อข่าวกดเปิดดูคำอธิบายภาษาไทยสั้น ๆ ได้ (Details/Summary)"""
+    """แสดงชื่อข่าวพร้อมสัญลักษณ์ค้นหา (🔎) — เอาเมาส์ชี้แล้วเห็นความหมายภาษาไทยสั้น ๆ (tooltip)"""
     meaning = _NEWS_MEANING_TH.get(title)
     if not meaning:
         meaning = "ข่าวแดงผลกระทบสูงของสกุลเงินนี้ — ควรหลีกเลี่ยงการเปิดออเดอร์ช่วงประกาศ และเฝ้าดูการเคลื่อนไหวของราคาก่อน"
-    return (
-        f'<details class="news-detail"><summary>{title}</summary>'
-        f'<span class="news-detail__body">{meaning}</span></details>'
-    )
+    return f'<span class="news-tip" title="{meaning}">{title} <span class="news-tip__icon">🔎</span></span>'
 
 
 def render_html_table(rows: list, colors: list, actual_col: str, band_keys: list = None) -> str:
