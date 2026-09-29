@@ -661,6 +661,159 @@ def _news_title_html(title: str) -> str:
     )
 
 
+def compute_support_resistance(df, swing_window: int = 40) -> dict:
+    """
+    คำนวณแนวรับ/แนวต้านอัตโนมัติจาก:
+    - Pivot Point แบบ Classic (แท่งปิดล่าสุด) -> R3..S3 + Pivot
+    - Swing High/Low ในช่วง swing_window แท่งล่าสุด
+    - ระดับเลขกลม (Round Numbers) ใกล้ราคาปัจจุบัน
+    รวมระดับที่อยู่ใกล้กัน (ภายใน ~0.15%) แล้วจัดหมวดเป็นด้าน R / S เทียบราคาปัจจุบัน
+    :return: dict {current_close, levels, nearest_support, nearest_resistance}
+    """
+    out = {"current_close": None, "levels": [], "nearest_support": None, "nearest_resistance": None}
+    if df is None or len(df) < 3:
+        return out
+    df2 = df.dropna(subset=["high", "low", "close"])
+    if len(df2) < 3:
+        return out
+
+    last = df2.iloc[-1]
+    H = float(last["high"])
+    L = float(last["low"])
+    C = float(last["close"])
+    P = (H + L + C) / 3
+
+    # 1) Pivot Point แบบ Classic
+    candidates = [
+        (H + 2 * (P - L), "R3", "Pivot"),
+        (P + (H - L), "R2", "Pivot"),
+        (2 * P - L, "R1", "Pivot"),
+        (P, "Pivot", "Pivot"),
+        (2 * P - H, "S1", "Pivot"),
+        (P - (H - L), "S2", "Pivot"),
+        (L - 2 * (H - P), "S3", "Pivot"),
+    ]
+
+    # 2) Swing High/Low
+    look = df2.tail(swing_window)
+    if len(look) >= 5:
+        highs = look["high"].astype(float).tolist()
+        lows = look["low"].astype(float).tolist()
+        for i in range(2, len(look) - 2):
+            if highs[i] == max(highs[i - 2:i + 3]):
+                candidates.append((highs[i], "Swing", "Swing"))
+            if lows[i] == min(lows[i - 2:i + 3]):
+                candidates.append((lows[i], "Swing", "Swing"))
+
+    # 3) ระดับเลขกลม (Round Numbers)
+    step = 100 if C >= 1000 else 10 if C >= 100 else 1 if C >= 10 else 0.5 if C >= 1 else 0.1
+    dec = 0 if step >= 1 else 1
+    base = int(C // step) * step
+    for k in range(-3, 4):
+        v = round(base + k * step, dec)
+        if v > 0 and v != C:
+            candidates.append((v, "Round", "Round"))
+
+    # รวมระดับที่อยู่ใกล้กัน (ความสำคัญ: Pivot > Swing > Round)
+    rank = {"Pivot": 0, "Swing": 1, "Round": 2}
+    groups = []
+    for price, label, kind in sorted(candidates, key=lambda x: x[0]):
+        placed = False
+        for g in groups:
+            if abs(g["avg"] - price) / max(price, 1e-9) * 100 <= 0.15:
+                g["items"].append((price, label, kind))
+                g["avg"] = sum(i[0] for i in g["items"]) / len(g["items"])
+                placed = True
+                break
+        if not placed:
+            groups.append({"avg": price, "items": [(price, label, kind)]})
+
+    levels = []
+    for g in groups:
+        best = min(g["items"], key=lambda i: rank[i[2]])
+        price, label, kind = best
+        side = "R" if price > C else "S"
+        levels.append(
+            {
+                "price": round(g["avg"], 2),
+                "label": label,
+                "kind": kind,
+                "side": side,
+                "pct": abs(price - C) / C * 100 if C else 0.0,
+            }
+        )
+    levels.sort(key=lambda x: x["price"], reverse=True)
+
+    resistances = [l for l in levels if l["side"] == "R"]
+    supports = [l for l in levels if l["side"] == "S"]
+
+    out["current_close"] = C
+    out["levels"] = levels
+    out["nearest_resistance"] = min(resistances, key=lambda l: l["price"]) if resistances else None
+    out["nearest_support"] = max(supports, key=lambda l: l["price"]) if supports else None
+    return out
+
+
+def _sr_box_html(l: dict, is_support: bool, is_nearest: bool, is_price: bool = False) -> str:
+    """กล่องเล็กแสดงระดับ S/R หรือราคาปัจจุบัน"""
+    border = "#f87171" if is_support else "#34d399"
+    text = "#fecaca" if is_support else "#a7f3d0"
+    if is_price:
+        border, text = "#fbbf24", "#fde68a"
+    ring = "box-shadow:0 0 0 2px rgba(251,191,36,0.55);" if is_nearest else ""
+    if is_price:
+        inner = (
+            f'<div style="font-size:0.7rem;color:#94a3b8;">ราคาปัจจุบัน</div>'
+            f'<div style="font-size:1.15rem;font-weight:800;color:#f8fafc;">${l["price"]:,.2f}</div>'
+        )
+    else:
+        arrow = "↑" if not is_support else "↓"
+        inner = (
+            f'<div style="font-size:0.7rem;color:#94a3b8;">{arrow} {l["label"]} · {l["pct"]:.2f}%</div>'
+            f'<div style="font-size:1.15rem;font-weight:800;color:{text};">${l["price"]:,.2f}</div>'
+        )
+    return (
+        f'<div style="flex:1 1 120px;min-width:120px;background:rgba(15,23,42,0.85);'
+        f'border:1px solid {border};border-radius:10px;padding:8px 10px;text-align:center;{ring}">{inner}</div>'
+    )
+
+
+def _sr_panel_html(sr: dict) -> str:
+    """สร้าง HTML แผงแนวรับ/แนวต้านอัตโนมัติแบบบันได (R3...S3)"""
+    C = sr["current_close"]
+    resistances = sorted([l for l in sr["levels"] if l["side"] == "R"], key=lambda l: l["price"])[:3][::-1]
+    supports = sorted([l for l in sr["levels"] if l["side"] == "S"], key=lambda l: l["price"], reverse=True)[:3]
+    nr = sr["nearest_resistance"]
+    ns = sr["nearest_support"]
+
+    cells = "".join(
+        _sr_box_html(l, False, bool(nr and l["price"] == nr["price"])) for l in resistances
+    )
+    cells += _sr_box_html({"price": C}, False, False, is_price=True)
+    cells += "".join(
+        _sr_box_html(l, True, bool(ns and l["price"] == ns["price"])) for l in supports
+    )
+
+    tip = ""
+    if nr and ns:
+        tip = (
+            f'<div style="margin-top:8px;color:#cbd5e1;font-size:0.9rem;">'
+            f'• ใกล้แนวต้าน <b style="color:#f87171;">{nr["label"]} ${nr["price"]:,.2f}</b> อยู่ห่าง {nr["pct"]:.2f}%<br/>'
+            f'• ใกล้แนวรับ <b style="color:#34d399;">{ns["label"]} ${ns["price"]:,.2f}</b> อยู่ห่าง {ns["pct"]:.2f}%'
+            f'</div>'
+        )
+    return (
+        f'<div style="background:rgba(15,23,42,0.9);border:1px solid rgba(255,255,255,0.08);'
+        f'border-radius:14px;padding:16px 20px;margin:12px 0 6px 0;">'
+        f'<div style="font-size:1.15rem;font-weight:800;color:#f8fafc;margin-bottom:10px;">'
+        f'📏 แนวรับ / แนวต้านอัตโนมัติ (Support & Resistance)</div>'
+        f'<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;">{cells}</div>'
+        f'{tip}'
+        f'<div style="margin-top:8px;color:#64748b;font-size:0.8rem;">อ้างอิง: Pivot Point Classic + Swing High/Low 40 แท่งล่าสุด + ระดับเลขกลม</div>'
+        f'</div>'
+    )
+
+
 def render_html_table(rows: list, colors: list, actual_col: str, band_keys: list = None) -> str:
     """
     สร้าง HTML Table ที่อ่านง่าย ตัวเลขใหญ่ พอดีกับคอลัมน์
@@ -1149,6 +1302,39 @@ if df_ema_full is not None and len(df_ema_full) > 0:
                 col=1,
             )
 
+        # เส้นแนวรับ/แนวต้านอัตโนมัติ (SR) ซ้อนบนกราฟ
+        sr_info = compute_support_resistance(df_ema_full)
+        _lo = float(df_plot["low"].min()) * 0.995
+        _hi = float(df_plot["high"].max()) * 1.005
+        for lv in sr_info["levels"]:
+            if not (_lo <= lv["price"] <= _hi):
+                continue
+            _c = "#f87171" if lv["side"] == "R" else "#34d399"
+            if lv["kind"] == "Pivot":
+                _c = "#fbbf24"
+            _dash = "dash" if lv["kind"] == "Round" else "dot"
+            fig_chart.add_shape(
+                type="line",
+                x0=df_plot["time"].iloc[0],
+                x1=df_plot["time"].iloc[-1],
+                y0=lv["price"],
+                y1=lv["price"],
+                line=dict(color=_c, width=1, dash=_dash),
+                row=1,
+                col=1,
+            )
+            fig_chart.add_annotation(
+                x=df_plot["time"].iloc[0],
+                y=lv["price"],
+                text=lv["label"],
+                showarrow=False,
+                xanchor="left",
+                xshift=2,
+                font=dict(size=10, color=_c),
+                row=1,
+                col=1,
+            )
+
         # ปริมาณ Volume ด้านล่าง
         fig_chart.add_trace(
             go.Bar(
@@ -1220,6 +1406,10 @@ if "mtf_results" in locals():
         _verdict_panel_html(verdict, countdown_to_news),
         unsafe_allow_html=True,
     )
+
+# 📏 แนวรับ/แนวต้านอัตโนมัติ — แสดงต่อจาก Verdict (ใช้ sr_info จากกราฟ Section 6)
+if "sr_info" in locals() and sr_info and sr_info["levels"]:
+    st.markdown(_sr_panel_html(sr_info), unsafe_allow_html=True)
 
 # แท็บแสดง 3 มุมมองตามโจทย์: สรุปรายสัปดาห์, ดูแยกตามวัน, และ ปฏิทินรายเดือน
 tab_weekly, tab_daily, tab_calendar = st.tabs(
