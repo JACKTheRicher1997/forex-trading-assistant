@@ -143,8 +143,8 @@ st.markdown(
         width: 100%;
         border-collapse: collapse;
         color: #e2e8f0;
-        font-size: 1rem;
-        line-height: 1.35;
+        font-size: 1.05rem;
+        line-height: 1.4;
     }
     .news-table th {
         background: rgba(30, 41, 59, 0.8);
@@ -172,7 +172,8 @@ st.markdown(
     .news-tip {
         cursor: help;
         color: #e2e8f0;
-        font-weight: 500;
+        font-weight: 600;
+        font-size: 1.05rem;
     }
     .news-tip:hover {
         color: #fbbf24;
@@ -180,9 +181,9 @@ st.markdown(
         text-underline-offset: 3px;
     }
     .news-tip__icon {
-        font-size: 0.8em;
-        opacity: 0.75;
-        margin-left: 2px;
+        font-size: 1rem;
+        opacity: 0.9;
+        margin-left: 4px;
         vertical-align: middle;
     }
 
