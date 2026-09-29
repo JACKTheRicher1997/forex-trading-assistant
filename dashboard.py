@@ -904,7 +904,83 @@ def compute_atr(df, period: int = 14) -> Optional[float]:
     return atr
 
 
-def _plan_sl_tp_html(direction: str, price: float, atr: float, sr: dict) -> str:
+def _instrument_spec(symbol: str) -> dict:
+    """สเปกสัญลักษณ์: ขนาดสัญญาต่อ 1 lot และมูลค่าที่เปลี่ยนไปต่อราคา 1 หน่วย (ใช้คำนวณขนาดไม้)"""
+    sym = str(symbol).upper()
+    if "XAU" in sym:
+        return {"label": "ทองคำ (XAUUSD)", "contract": 100.0, "per_move": 100.0, "pip": 0.01}
+    if "XAG" in sym:
+        return {"label": "เงิน (XAGUSD)", "contract": 5000.0, "per_move": 5000.0, "pip": 0.01}
+    if "BTC" in sym or "ETH" in sym:
+        return {"label": "คริปโต", "contract": 1.0, "per_move": 1.0, "pip": 1.0}
+    jpy = sym.endswith("JPY")
+    return {
+        "label": "คู่เงิน (Forex)",
+        "contract": 100000.0,
+        "per_move": 100000.0,
+        "pip": 0.01 if jpy else 0.0001,
+        "value_per_pip": 10.0,  # 1 lot มูลค่า $10 ต่อ 1 pip
+    }
+
+
+def compute_position_size(
+    symbol: str,
+    entry: float,
+    sl_price: float,
+    account_size: float,
+    risk_pct: float,
+) -> dict:
+    """
+    คำนวณขนาดไม้ (Lot) จากความเสี่ยงที่ยอมรับได้
+    สูตรทองคำ/คริปโต: Lot = เงินเสี่ยง ÷ (ระยะ SL × มูลค่าต่อ 1 หน่วยราคาของ 1 lot)
+    สูตรคู่เงิน:            Lot = เงินเสี่ยง ÷ (จำนวน pip ของ SL × $10 ต่อ pip ต่อ 1 lot)
+    """
+    spec = _instrument_spec(symbol)
+    try:
+        account_size = float(account_size)
+        risk_pct = float(risk_pct)
+        entry = float(entry)
+        sl_price = float(sl_price)
+    except Exception:
+        return {}
+
+    if account_size <= 0 or risk_pct <= 0 or entry <= 0 or sl_price <= 0:
+        return {}
+
+    risk_amount = account_size * risk_pct / 100.0
+    sl_distance = abs(entry - sl_price)
+    if sl_distance <= 0:
+        return {}
+
+    sl_pips = sl_distance / spec["pip"] if spec.get("pip") else 0.0
+    if spec.get("value_per_pip"):
+        raw_lots = risk_amount / (sl_pips * spec["value_per_pip"])
+    else:
+        raw_lots = risk_amount / (sl_distance * spec["per_move"])
+
+    # เผื่อขั้นต่ำของโบรกเกอร์ (0.01 lot) และปัดทศนิยม 2 ตำแหน่ง
+    lots = max(0.01, round(raw_lots, 2))
+    actual_risk = (
+        lots * sl_pips * spec["value_per_pip"]
+        if spec.get("value_per_pip")
+        else lots * sl_distance * spec["per_move"]
+    )
+    return {
+        "lots": lots,
+        "raw_lots": raw_lots,
+        "risk_amount": risk_amount,
+        "actual_risk": actual_risk,
+        "risk_pct_actual": (actual_risk / account_size * 100) if account_size else 0.0,
+        "sl_distance": sl_distance,
+        "sl_pips": sl_pips,
+        "spec": spec,
+        "account_size": account_size,
+        "risk_pct": risk_pct,
+        "too_small": raw_lots < 0.01,
+    }
+
+
+def _plan_sl_tp_html(direction: str, price: float, atr: float, sr: dict, size: dict = None) -> str:
     """
     สร้างแผน SL/TP อัตโนมัติจาก ATR (และแนวรับ/ต้านใกล้สุดเป็นตัวช่วย)
     ค่าเริ่มต้น: SL = 1.5xATR, TP1 = 1.5xATR (R:R 1:1), TP2 = 3xATR (R:R 1:2)
@@ -956,6 +1032,49 @@ def _plan_sl_tp_html(direction: str, price: float, atr: float, sr: dict) -> str:
         + box("Take Profit 2", tp2_price, "#34d399", f"R:R 1:{rr2:.1f}")
     )
 
+    def box_txt(label, txt, color, sub=""):
+        return (
+            f'<div style="flex:1 1 130px;min-width:130px;background:rgba(15,23,42,0.85);'
+            f'border:1px solid {color};border-radius:10px;padding:8px 10px;text-align:center;">'
+            f'<div style="font-size:0.7rem;color:#94a3b8;">{label}</div>'
+            f'<div style="font-size:1.15rem;font-weight:800;color:{color};">{txt}</div>'
+            f'{("<div style=font-size:0.72rem;color:#94a3b8;>" + sub + "</div>") if sub else ""}'
+            f'</div>'
+        )
+
+    size_html = ""
+    if size and size.get("lots"):
+        _sp = size["spec"]
+        _pip_sub = (
+            f'SL {size["sl_pips"]:,.1f} pip'
+            if _sp.get("value_per_pip")
+            else f'SL {size["sl_distance"]:,.2f} จุด'
+        )
+        _lots_txt = '{:g} lot'.format(size["lots"])
+        _risk_txt = '${:,.2f}'.format(size["risk_amount"])
+        _acct_txt = '${:,.2f}'.format(size["account_size"])
+        _actual_txt = '${:,.2f}'.format(size["actual_risk"])
+        _actual_pct = '{:.2f}%'.format(size["risk_pct_actual"])
+        _risk_pct_txt = '{:g}%'.format(size["risk_pct"])
+        _contract_txt = '{:,.0f}'.format(_sp["contract"])
+        _pip_value_txt = ' · มูลค่า $10 ต่อ 1 pip' if _sp.get("value_per_pip") else ''
+        _warn = (
+            ' ⚠️ ความเสี่ยงต่ำเกินไปสำหรับพอร์ตนี้ — พิจารณาลดระยะ SL หรือเพิ่มพอร์ต'
+            if size.get("too_small")
+            else ""
+        )
+        size_html = (
+            f'<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;align-items:stretch;">'
+            f'{box_txt("ขนาดไม้แนะนำ", _lots_txt, "#38bdf8", _pip_sub)}'
+            f'{box_txt("เงินเสี่ยงสูงสุด", _risk_txt, "#f59e0b", _risk_pct_txt + " ของพอร์ต")}'
+            f'</div>'
+            f'<div style="margin-top:6px;color:#94a3b8;font-size:0.85rem;">'
+            f'💰 คำนวณจากพอร์ต {_acct_txt} · เสี่ยงจริงประมาณ '
+            f'{_actual_txt} ({_actual_pct} ของพอร์ต) · 1 lot = {_contract_txt} หน่วย'
+            f'{_pip_value_txt}{_warn}'
+            f'</div>'
+        )
+
     return (
         f'<div style="background:rgba(15,23,42,0.9);border:1px solid {dir_color};'
         f'border-radius:14px;padding:16px 20px;margin:12px 0 6px 0;">'
@@ -964,6 +1083,7 @@ def _plan_sl_tp_html(direction: str, price: float, atr: float, sr: dict) -> str:
         f'<span style="font-size:1.3rem;font-weight:800;color:{dir_color};">{arrow}</span>'
         f'</div>'
         f'<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:stretch;">{cells}</div>'
+        f'{size_html}'
         f'<div style="margin-top:10px;color:#cbd5e1;font-size:0.9rem;">'
         f'📊 ความผันผวน ATR({14}) = ${atr:,.2f} · ใช้ SL/TP ที่ {abs(1.5 * atr):,.2f} / {abs(3.0 * atr):,.2f} จุดจากราคา<br/>'
         f'{"🎯 " + ref_note + "<br/>" if ref_note else ""}'
@@ -1388,6 +1508,28 @@ with st.sidebar:
 
     indicator_service.fast_period = fast_ema
     indicator_service.slow_period = slow_ema
+
+    st.markdown("---")
+    st.markdown("### 💰 บัญชี & ความเสี่ยง")
+    col_acct, col_risk = st.columns(2)
+    with col_acct:
+        account_size = st.number_input(
+            "ขนาดพอร์ต ($)",
+            min_value=10.0,
+            max_value=10_000_000.0,
+            value=float(_st_secret("ACCOUNT_SIZE", 1000)),
+            step=100.0,
+        )
+    with col_risk:
+        risk_pct = st.number_input(
+            "เสี่ยงต่อไม้ (%)",
+            min_value=0.1,
+            max_value=10.0,
+            value=float(_st_secret("RISK_PCT", 1.0)),
+            step=0.5,
+            format="%.1f",
+        )
+    st.caption("ใช้คำนวณขนาดไม้ (Lot) อัตโนมัติจากระยะ Stop Loss ในแผนการเทรด")
 
     st.markdown("---")
     st.markdown("### 📲 ทดสอบการแจ้งเตือน LINE")
@@ -1916,8 +2058,17 @@ if "mtf_results" in locals():
     # 🎯 แผน SL/TP อัตโนมัติจาก ATR — แสดงเฉพาะเมื่อ Verdict แนะนำเทรดได้จริง
     _atrv = locals().get("atr_value") if "atr_value" in locals() else None
     if _atrv and verdict["verdict"] in ("BUY", "SELL") and sr_info and sr_info["current_close"]:
+        # 💰 คำนวณขนาดไม้จากพอร์ต + % ความเสี่ยง (ต้องใช้ SL เดียวกับที่แสดงในแผน)
+        _sl = sr_info["current_close"] - (
+            1 if verdict["verdict"] == "BUY" else -1
+        ) * 1.5 * _atrv
+        _size = compute_position_size(
+            selected_symbol, sr_info["current_close"], _sl, account_size, risk_pct
+        )
         st.markdown(
-            _plan_sl_tp_html(verdict["verdict"], sr_info["current_close"], _atrv, sr_info),
+            _plan_sl_tp_html(
+                verdict["verdict"], sr_info["current_close"], _atrv, sr_info, _size
+            ),
             unsafe_allow_html=True,
         )
     elif _atrv:
