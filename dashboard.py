@@ -1171,6 +1171,22 @@ _JOURNAL_MAX_ENTRIES = 200
 _JOURNAL_MAX_BARS = 120  # รอประมาณกี่แท่งถึงจะตัดสินผล (M5 -> ~10 ชั่วโมง)
 
 
+def _fmt_px(value) -> str:
+    """
+    จัดรูปแบบราคาให้เห็นระดับราคาจริงของแต่ละตลาด
+    - ราคา >= 10 (ทองคำ 4,204.80 / BTC) -> 2 ทศนิยม
+    - ราคา < 10 (EURUSD 1.08500) -> 5 ทศนิยม เพื่อให้เห็นระดับ pip
+    คืน "-" ถ้าไม่มี/ผิดรูปแบบ (รองรับรายการเก่าที่ไม่มีข้อมูล)
+    """
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    if v <= 0:
+        return "-"
+    return f"{v:,.5f}".rstrip("0").rstrip(".") if v < 10 else f"{v:,.2f}"
+
+
 def _load_journal() -> list:
     """โหลดบันทึกสัญญาณทั้งหมด"""
     try:
@@ -1419,7 +1435,7 @@ def _journal_html(items: list, s: dict) -> str:
         )
 
     recent = ""
-    for it in items[-6:][::-1]:
+    for it in items[-8:][::-1]:
         st_ = it.get("status", "OPEN")
         icon = {"WIN": "✅", "LOSS": "❌", "TIME": "⏳"}.get(st_, "⏳")
         color = {"WIN": "#10b981", "LOSS": "#ef4444", "TIME": "#f59e0b"}.get(st_, "#94a3b8")
@@ -1427,6 +1443,22 @@ def _journal_html(items: list, s: dict) -> str:
         vcolor = "#10b981" if v == "BUY" else "#ef4444"
         pct = it.get("result_pct")
         ptxt = f'{pct:+.2f}%' if pct is not None else "—"
+
+        def _raw(key) -> float:
+            try:
+                return float(it.get(key))
+            except (TypeError, ValueError):
+                return 0.0
+
+        # อัตราส่วนผลตอบแทนต่อความเสี่ยงเทียบเป้า TP1 (ไม่มีข้อมูล/ความเสี่ยงเป็นศูนย์ -> "-")
+        _entry, _sl_v, _tp1_v = _raw("entry"), _raw("sl"), _raw("tp1")
+        _risk = abs(_entry - _sl_v)
+        if _risk > 0 and _tp1_v:
+            _rr = abs(_tp1_v - _entry) / _risk
+            _rr_txt, _rr_col = f'{_rr:.1f}:1', "#10b981" if _rr >= 1.5 else "#f59e0b"
+        else:
+            _rr_txt, _rr_col = "-", "#64748b"
+
         try:
             ts_txt = datetime.datetime.fromisoformat(it["created_utc"]).astimezone(
                 _resolve_app_tz()[0]
@@ -1437,7 +1469,11 @@ def _journal_html(items: list, s: dict) -> str:
             f'<tr><td style="text-align:center;">{ts_txt}</td>'
             f'<td style="text-align:center;">{it.get("symbol", "")}</td>'
             f'<td style="text-align:center;color:{vcolor};font-weight:700;">{v}</td>'
-            f'<td style="text-align:center;">{it.get("entry", 0):,.2f}</td>'
+            f'<td style="text-align:right;font-weight:700;">{_fmt_px(it.get("entry"))}</td>'
+            f'<td style="text-align:right;color:#ef4444;">{_fmt_px(it.get("sl"))}</td>'
+            f'<td style="text-align:right;color:#10b981;">{_fmt_px(it.get("tp1"))}</td>'
+            f'<td style="text-align:right;color:#34d399;">{_fmt_px(it.get("tp2"))}</td>'
+            f'<td style="text-align:center;color:{_rr_col};font-weight:700;">{_rr_txt}</td>'
             f'<td style="text-align:center;color:{color};font-weight:700;">{icon} {st_}</td>'
             f'<td style="text-align:center;color:{color};">{ptxt}</td></tr>'
         )
@@ -1466,10 +1502,13 @@ def _journal_html(items: list, s: dict) -> str:
         f'<th style="padding:4px;">หมดเวลา</th><th style="padding:4px;">รอ</th><th style="padding:4px;">%</th>'
         f'</tr></thead><tbody>{tf_rows}</tbody></table></div>'
         f'<div style="margin-top:12px;overflow-x:auto;">'
-        f'<table style="width:100%;border-collapse:collapse;font-size:0.88rem;">'
+        f'<table style="width:100%;border-collapse:collapse;font-size:0.82rem;">'
         f'<thead><tr style="color:#94a3b8;border-bottom:1px solid #334155;">'
-        f'<th style="padding:4px;">เวลา</th><th style="padding:4px;">Symbol</th><th style="padding:4px;">ทิศ</th>'
-        f'<th style="padding:4px;">ราคาเข้า</th><th style="padding:4px;">ผล</th><th style="padding:4px;">%</th>'
+        f'<th style="padding:4px;">เวลา</th><th style="padding:4px;">Symbol</th>'
+        f'<th style="padding:4px;">ทิศ</th><th style="padding:4px;">ราคาเข้า</th>'
+        f'<th style="padding:4px;">SL</th><th style="padding:4px;">TP1</th>'
+        f'<th style="padding:4px;">TP2</th><th style="padding:4px;">R:R</th>'
+        f'<th style="padding:4px;">ผล</th><th style="padding:4px;">%</th>'
         f'</tr></thead><tbody>{recent}</tbody></table></div>'
         f'<div style="margin-top:8px;color:#64748b;font-size:0.78rem;">'
         f'*ตัดสินผลจากราคาจริง: ถ้าแตะ Stop Loss ก่อน = แพ้ · ถ้าแตะ TP1 = ชนะ · '
