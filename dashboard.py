@@ -912,6 +912,54 @@ def _plan_sl_tp_html(direction: str, price: float, atr: float, sr: dict) -> str:
     )
 
 
+def compute_volatility(atr_now: float, atr_base: Optional[float]) -> dict:
+    """
+    เทียบ ATR ปัจจุบันกับค่าเฉลี่ยระยะยาว (baseline) เพื่อบอกระดับความผันผวน
+    - ratio < 1.0  -> ปกติ (สีเขียว)
+    - 1.0-1.5      -> สูง (สีเหลือง)
+    - >= 1.5       -> ร้อนมาก (สีแดง)
+    """
+    base = atr_base or atr_now
+    ratio = (atr_now / base) if base else 0.0
+    if ratio >= 1.5:
+        status, color = "ร้อนมาก (Very Hot)", "#ef4444"
+        msg = "สเปรดกว้าง + หยุดถูกลากง่าย — ลดขนาด lot อย่าฝืนเทรด หรือรอตลาดนิ่งลงก่อน"
+    elif ratio >= 1.0:
+        status, color = "สูง (High)", "#f59e0b"
+        msg = "ความผันผวนสูงกว่าปกติ ควรตั้ง SL กว้างขึ้นและลดขนาด lot ลง"
+    else:
+        status, color = "ปกติ (Normal)", "#10b981"
+        msg = "ความผันผวนอยู่ในเกณฑ์ปกติ เหมาะกับการเทรดตามแผน"
+    return {"ratio": ratio, "ratio_pct": ratio * 100, "status": status, "color": color, "msg": msg}
+
+
+def _volatility_html(atr_now: float, atr_base: Optional[float], v: dict) -> str:
+    """สร้าง HTML เกจวัดความผันผวน (ATR ปัจจุบัน vs เฉลี่ยระยะยาว)"""
+    pos = min(max(v["ratio"], 0.0), 2.0) / 2.0 * 100.0
+    base_txt = f"${atr_base:,.2f}" if atr_base else "—"
+    return (
+        f'<div style="background:rgba(15,23,42,0.9);border:1px solid {v["color"]};'
+        f'border-radius:14px;padding:16px 20px;margin:12px 0 6px 0;">'
+        f'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">'
+        f'<span style="font-size:1.15rem;font-weight:800;color:#f8fafc;">🌡️ ระดับความผันผวน (Volatility)</span>'
+        f'<span style="font-size:1.1rem;font-weight:800;color:{v["color"]};">{v["status"]} · {v["ratio"]:.2f}x</span>'
+        f'</div>'
+        f'<div style="display:flex;gap:16px;margin-top:10px;flex-wrap:wrap;">'
+        f'<span style="color:#cbd5e1;font-size:0.92rem;">ATR ปัจจุบัน: <b>${atr_now:,.2f}</b></span>'
+        f'<span style="color:#cbd5e1;font-size:0.92rem;">ค่าเฉลี่ยระยะยาว: <b>{base_txt}</b></span>'
+        f'</div>'
+        f'<div style="position:relative;height:14px;border-radius:7px;margin:14px 0 4px 0;'
+        f'background:linear-gradient(90deg,#10b981 0%,#10b981 50%,#f59e0b 50%,#f59e0b 75%,#ef4444 75%,#ef4444 100%);">'
+        f'<div style="position:absolute;left:{pos}%;top:-3px;width:4px;height:20px;'
+        f'background:#f8fafc;border-radius:2px;transform:translateX(-2px);box-shadow:0 0 6px rgba(248,250,252,0.8);"></div>'
+        f'</div>'
+        f'<div style="display:flex;justify-content:space-between;color:#64748b;font-size:0.75rem;">'
+        f'<span>0.5x</span><span>1x (ปกติ)</span><span>1.5x</span><span>2x</span></div>'
+        f'<div style="margin-top:10px;color:#e2e8f0;font-size:0.95rem;">💡 {v["msg"]}</div>'
+        f'</div>'
+    )
+
+
 def render_html_table(rows: list, colors: list, actual_col: str, band_keys: list = None) -> str:
     """
     สร้าง HTML Table ที่อ่านง่าย ตัวเลขใหญ่ พอดีกับคอลัมน์
@@ -1403,6 +1451,7 @@ if df_ema_full is not None and len(df_ema_full) > 0:
         # เส้นแนวรับ/แนวต้านอัตโนมัติ (SR) ซ้อนบนกราฟ
         sr_info = compute_support_resistance(df_ema_full)
         atr_value = compute_atr(df_ema_full)
+        atr_base_value = compute_atr(df_ema_full, 100) if len(df_ema_full) > 100 else None
         _lo = float(df_plot["low"].min()) * 0.995
         _hi = float(df_plot["high"].max()) * 1.005
         for lv in sr_info["levels"]:
@@ -1527,6 +1576,12 @@ if "mtf_results" in locals():
             f'</div>',
             unsafe_allow_html=True,
         )
+
+    # 🌡️ เกจวัดความผันผวน (ATR ปัจจุบัน vs เฉลี่ยระยะยาว) — แสดงเสมอเมื่อมีข้อมูล
+    if _atrv:
+        _atr_base = locals().get("atr_base_value") if "atr_base_value" in locals() else None
+        _vol = compute_volatility(_atrv, _atr_base)
+        st.markdown(_volatility_html(_atrv, _atr_base, _vol), unsafe_allow_html=True)
 
 # แท็บแสดง 3 มุมมองตามโจทย์: สรุปรายสัปดาห์, ดูแยกตามวัน, และ ปฏิทินรายเดือน
 tab_weekly, tab_daily, tab_calendar = st.tabs(
