@@ -1,7 +1,8 @@
 """
 Indicator Service Module
 คำนวณ Exponential Moving Average (EMA 50 & EMA 150)
-และตรวจจับสัญญาณการตัดกัน (Golden Cross / Death Cross)
+ตรวจจับสัญญาณการตัดกัน (Golden Cross / Death Cross)
+คำนวณ RSI (Relative Strength Index) และ Divergence
 พร้อมระบบป้องกันการแจ้งเตือนซ้ำต่อแท่งเทียน
 """
 
@@ -182,6 +183,143 @@ class IndicatorService:
             df["close"].ewm(span=self.slow_period, adjust=False).mean()
         )
         return df
+
+    def calculate_rsi_series(self, closes, period: int = 14) -> list:
+        """
+        คำนวณ RSI แบบ Wilder's Smoothing (มาตรฐานเดียวกับ TradingView)
+        :param closes: รายการราคาปิดเรียงจากเก่าไปใหม่
+        :return: รายการ RSI ความยาวเท่ากับ closes (ค่าต้นยังเป็น None)
+        """
+        values = [float(c) for c in closes]
+        out = [None] * len(values)
+        if period <= 0 or len(values) <= period:
+            return out
+
+        gains, losses = [], []
+        for i in range(1, len(values)):
+            diff = values[i] - values[i - 1]
+            gains.append(max(diff, 0.0))
+            losses.append(max(-diff, 0.0))
+
+        # ค่าเฉลี่ยเริ่มต้น = ค่าเฉลี่ยเคลื่อนที่ของ period แท่งแรก
+        avg_gain = sum(gains[:period]) / period
+        avg_loss = sum(losses[:period]) / period
+        out[period] = 100.0 if avg_loss == 0 else 100.0 - (100.0 / (1.0 + avg_gain / avg_loss))
+
+        for i in range(period, len(gains)):
+            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+            rs = (avg_gain / avg_loss) if avg_loss else None
+            out[i + 1] = 100.0 if rs is None else 100.0 - (100.0 / (1.0 + rs))
+        return out
+
+    def calculate_rsi(self, df: pd.DataFrame, period: int = 14) -> Optional[float]:
+        """คำนวณค่า RSI ล่าสุด (คืน None ถ้าข้อมูลไม่พอ)"""
+        if df is None or len(df) <= period:
+            return None
+        series = self.calculate_rsi_series(df["close"].tolist(), period)
+        return series[-1] if series else None
+
+    def compute_rsi_divergence(
+        self,
+        df: pd.DataFrame,
+        rsi_period: int = 14,
+        lookback: int = 60,
+        pivot_window: int = 2,
+    ) -> dict:
+        """
+        ตรวจ RSI Divergence จากจุดสูงสุด/ต่ำสุดเชิงโครงสร้าง (swing pivot)
+        - Bearish Divergence: ราคาทำจุดสูงใหม่ แต่ RSI ทำจุดสูงต่ำกว่า -> แนวโน้มอ่อน
+        - Bullish Divergence: ราคาทำจุดต่ำใหม่ แต่ RSI ทำจุดต่ำสูงกว่า -> แนวโน้มฟื้น
+        :return: dict พร้อม type/ราคา/RSI ของจุดทั้งสองและคำแนะนำ
+        """
+        empty = {
+            "type": None, "rsi": None, "price1": None, "rsi1": None,
+            "price2": None, "rsi2": None, "note": "", "bars": 0,
+        }
+        if df is None or len(df) < rsi_period + pivot_window * 2 + 5:
+            return empty
+
+        closes = [float(c) for c in df["close"].tolist()]
+        rsi_series = self.calculate_rsi_series(closes, rsi_period)
+        window = min(lookback, len(closes))
+        c_win = closes[-window:]
+        r_win = rsi_series[-window:]
+
+        start = 0
+        while start < len(r_win) and r_win[start] is None:
+            start += 1
+        if len(r_win) - start < pivot_window * 2 + 3:
+            return empty
+
+        piv_hi, piv_lo = [], []
+        for i in range(pivot_window, len(c_win) - pivot_window):
+            seg_c = c_win[i - pivot_window: i + pivot_window + 1]
+            seg_r = [
+                v for v in r_win[i - pivot_window: i + pivot_window + 1] if v is not None
+            ]
+            if not seg_r:
+                continue
+            # จุดสูงสุด/ต่ำสุดเฉพาะแท่งนั้น (ไม่มีแท่งอื่นเท่ากัน)
+            if c_win[i] == max(seg_c) and seg_c.count(c_win[i]) == 1 and r_win[i] is not None:
+                piv_hi.append((i, c_win[i], r_win[i]))
+            if c_win[i] == min(seg_c) and seg_c.count(c_win[i]) == 1 and r_win[i] is not None:
+                piv_lo.append((i, c_win[i], r_win[i]))
+
+        # กรองจุดสูง/ต่ำที่ "สำคัญ" เท่านั้น เพื่อไม่ให้จับการแกว่งเล็ก ๆ เป็นจุดเทียบ
+        min_gap = max(3, pivot_window * 2 + 1)
+        sig_hi = self._significant_pivots(piv_hi, min_gap, higher=True)
+        sig_lo = self._significant_pivots(piv_lo, min_gap, higher=False)
+
+        result = dict(empty)
+        result["rsi"] = rsi_series[-1]
+        result["bars"] = window
+
+        if len(sig_hi) >= 2:
+            (_, p1, r1), (_, p2, r2) = sig_hi[-2], sig_hi[-1]
+            if p2 > p1 and r2 < r1:
+                result.update({
+                    "type": "BEARISH", "price1": p1, "rsi1": r1, "price2": p2, "rsi2": r2,
+                    "note": (
+                        f'ราคาทำจุดสูงใหม่ ({p1:,.2f} → {p2:,.2f}) แต่ RSI อ่อนลง '
+                        f'({r1:.1f} → {r2:.1f}) — โมเมนตัมกำลังหมด ระวังกลับตัว'
+                    ),
+                })
+                return result
+        if len(sig_lo) >= 2:
+            (_, p1, r1), (_, p2, r2) = sig_lo[-2], sig_lo[-1]
+            if p2 < p1 and r2 > r1:
+                result.update({
+                    "type": "BULLISH", "price1": p1, "rsi1": r1, "price2": p2, "rsi2": r2,
+                    "note": (
+                        f'ราคาทำจุดต่ำใหม่ ({p1:,.2f} → {p2:,.2f}) แต่ RSI แข็งขึ้น '
+                        f'({r1:.1f} → {r2:.1f}) — โมเมนตัมกำลังฟื้น มองหาจังหวะกลับตัว'
+                    ),
+                })
+                return result
+
+        result["note"] = "ยังไม่พบ RSI Divergence ที่ชัดเจนในช่วงข้อมูลล่าสุด"
+        return result
+
+    @staticmethod
+    def _significant_pivots(pivots: list, min_gap: int, higher: bool) -> list:
+        """
+        คัดเฉพาะจุดสูง/ต่ำที่มีนัยสำคัญ (ห่างกันอย่างน้อย min_gap แท่ง)
+        โดยเดินจากแท่งล่าสุดย้อนกลับ และเลือกตัวที่ "รุนแรง" ที่สุดในช่วงนั้น
+        :param pivots: รายการ (index, ราคา, rsi) เรียงตามเวลา
+        :param higher: True = จุดสูง, False = จุดต่ำ
+        """
+        kept: list = []
+        for item in reversed(pivots):
+            if not kept or (kept[-1][0] - item[0]) >= min_gap:
+                kept.append(item)
+                continue
+            # ห่างกันน้อยเกินไป -> เก็บตัวที่ extreme กว่าไว้แทน
+            prev = kept[-1]
+            more_extreme = item[1] > prev[1] if higher else item[1] < prev[1]
+            if more_extreme:
+                kept[-1] = item
+        return list(reversed(kept))
 
     # ------------------------------------------------------------------
     def _advance_last_cross(self, state_key: str, record, new_time, new_signal) -> Optional[dict]:

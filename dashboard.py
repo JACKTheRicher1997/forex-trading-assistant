@@ -1668,6 +1668,245 @@ def _price_alert_status_html(alert: Optional[dict], current_price=None) -> str:
 
 
 # ==========================================
+# RSI (14) + Divergence - ตัวช่วยยืนยันที่สอง
+# ==========================================
+def _rsi_zone(rsi: float) -> tuple:
+    """แบ่งโซน RSI -> (ข้อความ, สี, คำแนะนำ)"""
+    if rsi >= 70:
+        return (
+            "สูงเกินไป (Overbought)",
+            "#ef4444",
+            "ราคามีโอกาสย่อตัว — ระวังการไล่ซื้อในฝั่งขาขึ้น รอ RSI ลงกลับใต้ 70 ก่อน",
+        )
+    if rsi <= 30:
+        return (
+            "ต่ำเกินไป (Oversold)",
+            "#10b981",
+            "ราคามีโอกาสเด้งกลับ — ระวังการไล่ขายในฝั่งขาลง รอ RSI ขึ้นกลับเหนือ 30 ก่อน",
+        )
+    if rsi >= 55:
+        return ("แข็งแรง (Bullish)", "#10b981", "โมเมนตัมฝั่งขาขึ้นยังมีพลัง")
+    if rsi <= 45:
+        return ("อ่อนแอ (Bearish)", "#ef4444", "โมเมนตัมฝั่งขาลงยังมีพลัง")
+    return ("ทรงตัว (Neutral)", "#f59e0b", "โมเมนตัมยังไม่ชัด — รอสัญญาณอื่นยืนยัน")
+
+
+def _rsi_html(rsi_data: dict, timeframe_str: str) -> str:
+    """สร้างแผง RSI + Divergence"""
+    if not rsi_data or rsi_data.get("rsi") is None:
+        return ""
+    rsi = float(rsi_data["rsi"])
+    zone, color, advice = _rsi_zone(rsi)
+    pos = min(max(rsi, 0.0), 100.0)
+
+    div_type = rsi_data.get("type")
+    if div_type == "BEARISH":
+        div_txt, div_color, div_icon = "🔻 Bearish Divergence (ราคาขึ้น แต่ RSI ไม่ยืนยัน)", "#ef4444", "⚠️"
+    elif div_type == "BULLISH":
+        div_txt, div_color, div_icon = "🔺 Bullish Divergence (ราคาลง แต่ RSI แข็งขึ้น)", "#10b981", "✅"
+    else:
+        div_txt, div_color, div_icon = "➖ ยังไม่พบ Divergence ที่ชัดเจน", "#94a3b8", "ℹ️"
+
+    div_detail = ""
+    if div_type:
+        div_detail = (
+            f'<div style="margin-top:6px;color:#cbd5e1;font-size:0.88rem;">'
+            f'{div_icon} {rsi_data.get("note", "")}</div>'
+        )
+
+    return (
+        f'<div style="background:rgba(15,23,42,0.9);border:1px solid {color};'
+        f'border-radius:14px;padding:16px 20px;margin:12px 0 6px 0;">'
+        f'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">'
+        f'<span style="font-size:1.15rem;font-weight:800;color:#f8fafc;">'
+        f'📊 RSI(14) &amp; Divergence · {timeframe_str}</span>'
+        f'<span style="font-size:1.1rem;font-weight:800;color:{color};">{rsi:.1f} · {zone}</span>'
+        f'</div>'
+        f'<div style="position:relative;height:14px;border-radius:7px;margin:14px 0 4px 0;'
+        f'background:linear-gradient(90deg,#ef4444 0%,#ef4444 30%,#10b981 30%,#10b981 70%,'
+        f'#ef4444 70%,#ef4444 100%);opacity:0.55;">'
+        f'<div style="position:absolute;left:{pos}%;top:-3px;width:4px;height:20px;'
+        f'background:#f8fafc;border-radius:2px;transform:translateX(-2px);'
+        f'box-shadow:0 0 6px rgba(248,250,252,0.8);"></div></div>'
+        f'<div style="display:flex;justify-content:space-between;color:#64748b;font-size:0.75rem;">'
+        f'<span>0 (ขายเกิน)</span><span>30</span><span>50</span><span>70</span>'
+        f'<span>100 (ซื้อเกิน)</span></div>'
+        f'<div style="margin-top:10px;color:#e2e8f0;font-size:0.95rem;">💡 {advice}</div>'
+        f'<div style="margin-top:8px;font-size:0.92rem;color:{div_color};font-weight:700;">{div_txt}</div>'
+        f'{div_detail}'
+        f'<div style="margin-top:6px;color:#64748b;font-size:0.78rem;">'
+        f'*ใช้เป็นตัวช่วยยืนยันที่สองข้าง EMA — ไม่ควรใช้ตัดสินใจเดี่ยว ๆ</div>'
+        f'</div>'
+    )
+
+
+# ==========================================
+# Market Structure (โครงสร้างราคา: HH/HL, LH/LL, BOS)
+# ==========================================
+def _swing_pivots(values: list, window: int = 2) -> tuple:
+    """หาจุดสูง/ต่ำเชิงโครงสร้าง (fractal pivot) -> (รายการจุดสูง, รายการจุดต่ำ)"""
+    highs, lows = [], []
+    n = len(values)
+    for i in range(window, n - window):
+        seg = values[i - window: i + window + 1]
+        if values[i] == max(seg) and seg.count(values[i]) == 1:
+            highs.append((i, float(values[i])))
+        if values[i] == min(seg) and seg.count(values[i]) == 1:
+            lows.append((i, float(values[i])))
+    return highs, lows
+
+
+def compute_market_structure(df, lookback: int = 80, pivot_window: int = 3) -> dict:
+    """
+    วิเคราะห์โครงสร้างราคา (Market Structure) จากจุดสูง/ต่ำเชิงโครงสร้าง
+    - โครงสร้างขาขึ้น: Higher High (HH) + Higher Low (HL)
+    - โครงสร้างขาลง: Lower High (LH) + Lower Low (LL)
+    - BOS (Break of Structure): ราคาปิดทะลุจุดสูง/ต่ำโครงสร้างล่าสุด
+    """
+    empty = {
+        "trend": "UNKNOWN", "label": "ข้อมูลไม่พอ", "color": "#94a3b8",
+        "note": "", "hh": None, "hl": None, "lh": None, "ll": None,
+        "bos": None, "bos_price": None, "bos_time": None, "last_high": None, "last_low": None,
+    }
+    if df is None or len(df) < pivot_window * 2 + 6:
+        return empty
+
+    try:
+        closes = [float(c) for c in df["close"].tolist()]
+    except Exception:
+        return empty
+    try:
+        times = df["time"].tolist()
+    except Exception:
+        times = None  # ไม่มีคอลัมน์เวลา — วิเคราะห์ได้ แต่จะไม่แสดงเวลาที่ทะลุ
+
+    window = min(lookback, len(closes))
+    c_win = closes[-window:]
+    piv_hi, piv_lo = _swing_pivots(c_win, pivot_window)
+
+    res = dict(empty)
+    res["last_high"] = piv_hi[-1][1] if piv_hi else None
+    res["last_low"] = piv_lo[-1][1] if piv_lo else None
+
+    trend = "RANGE"
+    if len(piv_hi) >= 2 and len(piv_lo) >= 2:
+        (_, prev_h), (_, last_h) = piv_hi[-2], piv_hi[-1]
+        (_, prev_l), (_, last_l) = piv_lo[-2], piv_lo[-1]
+        res.update({"hh": prev_h, "hl": prev_l, "lh": prev_h, "ll": prev_l})
+        hh = last_h > prev_h
+        hl = last_l > prev_l
+        lh = last_h < prev_h
+        ll = last_l < prev_l
+        res["higher_high"] = hh
+        res["higher_low"] = hl
+        res["lower_high"] = lh
+        res["lower_low"] = ll
+        if hh and hl:
+            trend = "UP"
+        elif lh and ll:
+            trend = "DOWN"
+        elif hh and ll:
+            trend = "BROADENING"
+        elif lh and hl:
+            trend = "CONTRACTING"
+    elif len(piv_hi) >= 2 or len(piv_lo) >= 2:
+        trend = "PARTIAL"
+
+    # BOS: ราคาปิดทะลุจุดโครงสร้างล่าสุด
+    last_close = c_win[-1]
+    bos = None
+    bos_price = None
+    bos_idx = None
+    if res["last_high"] is not None and last_close > res["last_high"]:
+        bos, bos_price, bos_idx = "BULLISH", res["last_high"], piv_hi[-1][0]
+    elif res["last_low"] is not None and last_close < res["last_low"]:
+        bos, bos_price, bos_idx = "BEARISH", res["last_low"], piv_lo[-1][0]
+    res["bos"] = bos
+    res["bos_price"] = bos_price
+    if bos_idx is not None and times is not None:
+        try:
+            res["bos_time"] = str(times[-window + bos_idx])
+        except Exception:
+            res["bos_time"] = None
+
+    meta = {
+        "UP": ("โครงสร้างขาขึ้น (HH + HL)", "#10b981",
+               "ราคาทำจุดสูงและจุดต่ำสูงขึ้นต่อเนื่อง — แนวโน้มขาขึ้นมีโครงสร้างรองรับ"),
+        "DOWN": ("โครงสร้างขาลง (LH + LL)", "#ef4444",
+                 "ราคาทำจุดสูงและจุดต่ำต่ำลงต่อเนื่อง — แนวโน้มขาลงมีโครงสร้างรองรับ"),
+        "BROADENING": ("โครงสร้างกว้างตัว", "#f59e0b",
+                       "จุดสูงขึ้นแต่จุดต่ำลง — ตลาดยังไม่เลือกทาง อย่าเพิ่งตามเทรน"),
+        "CONTRACTING": ("โครงสร้างหดตัว", "#f59e0b",
+                        "จุดสูงลงแต่จุดต่ำขึ้น — ตลาดกำลังตัดสินใจ รอการยืนยัน"),
+        "RANGE": ("โครงสร้างทรงตัว (Range)", "#94a3b8",
+                  "โครงสร้างยังไม่ชัด — เหมาะกับการเทรดขอบเขตแนวรับ/แนวต้าน"),
+        "PARTIAL": ("โครงสร้างข้อมูลไม่ครบ", "#94a3b8",
+                    "จุดสูง/ต่ำยังไม่พอสองจุด — รอข้อมูลเพิ่มก่อนสรุปโครงสร้าง"),
+        "UNKNOWN": ("ข้อมูลไม่พอ", "#94a3b8", "ต้องมีแท่งเทียนมากพอในการวิเคราะห์โครงสร้าง"),
+    }
+    res["trend"] = trend
+    res["label"], res["color"], res["note"] = meta[trend]
+    return res
+
+
+def _market_structure_html(ms: dict, timeframe_str: str) -> str:
+    """สร้างแผงโครงสร้างราคา"""
+    if not ms or ms.get("trend") == "UNKNOWN":
+        return ""
+    chips = []
+    for key, text, col in (
+        ("hh", "🔺 HH (จุดสูงขึ้น)", "#10b981"),
+        ("hl", "🟢 HL (จุดต่ำขึ้น)", "#10b981"),
+        ("lh", "🔻 LH (จุดสูงลง)", "#ef4444"),
+        ("ll", "🔴 LL (จุดต่ำลง)", "#ef4444"),
+    ):
+        val = ms.get(key)
+        if val is not None and ms.get({"hh": "higher_high", "hl": "higher_low",
+                                      "lh": "lower_high", "ll": "lower_low"}[key]):
+            chips.append(
+                f'<span style="background:rgba(15,23,42,0.9);border:1px solid {col};'
+                f'border-radius:8px;padding:4px 8px;color:{col};font-size:0.85rem;">'
+                f'{text}: {val:,.2f}</span>'
+            )
+
+    bos = ms.get("bos")
+    if bos == "BULLISH":
+        bos_html = (
+            f'<div style="margin-top:8px;color:#10b981;font-size:0.93rem;">'
+            f'🚀 <b>BOS ขาขึ้น</b> — ราคาปิดทะลุจุดสูงโครงสร้างที่ {ms.get("bos_price"):,.2f} '
+            f'ผู้ซื้อมีอำนาจเหนือ (ถือว่าโครงสร้างเปลี่ยนเป็นขาขึ้น)</div>'
+        )
+    elif bos == "BEARISH":
+        bos_html = (
+            f'<div style="margin-top:8px;color:#ef4444;font-size:0.93rem;">'
+            f'💥 <b>BOS ขาลง</b> — ราคาปิดทะลุจุดต่ำโครงสร้างที่ {ms.get("bos_price"):,.2f} '
+            f'ผู้ขายมีอำนาจเหนือ (ถือว่าโครงสร้างเปลี่ยนเป็นขาลง)</div>'
+        )
+    else:
+        bos_html = (
+            '<div style="margin-top:8px;color:#64748b;font-size:0.93rem;">'
+            '— ยังไม่มีการทะลุโครงสร้าง (BOS) ราคายังอยู่ในโครงสร้างเดิม</div>'
+        )
+
+    chips_html = f'<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">{"".join(chips)}</div>' if chips else ""
+    return (
+        f'<div style="background:rgba(15,23,42,0.9);border:1px solid {ms["color"]};'
+        f'border-radius:14px;padding:16px 20px;margin:12px 0 6px 0;">'
+        f'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">'
+        f'<span style="font-size:1.15rem;font-weight:800;color:#f8fafc;">'
+        f'🏗 โครงสร้างราคา (Market Structure) · {timeframe_str}</span>'
+        f'<span style="font-size:1.05rem;font-weight:800;color:{ms["color"]};">{ms["label"]}</span>'
+        f'</div>'
+        f'<div style="margin-top:8px;color:#e2e8f0;font-size:0.95rem;">💡 {ms["note"]}</div>'
+        f'{chips_html}'
+        f'{bos_html}'
+        f'<div style="margin-top:6px;color:#64748b;font-size:0.78rem;">'
+        f'*จุดสูง/ต่ำคำนวณจากแท่งเทียน {timeframe_str} — ใช้ประกอบกับแนวรับ/แนวต้านและ EMA</div>'
+        f'</div>'
+    )
+
+
+# ==========================================
 # DXY (US Dollar Index) - ตัวขับเคลื่อนทองคำ/คู่เงินฝั่ง USD
 # ==========================================
 def _ema_last(values: list, period: int) -> float:
@@ -2507,6 +2746,7 @@ if signal_result:
             tf_df = drop_last_open_candle(cached_rates(selected_symbol, tf, 800))
             trend = "NEUTRAL"
             color = "#94a3b8"
+            rsi_val = None
             if tf_df is not None and len(tf_df) > 0:
                 res = indicator_service.analyze(tf_df, symbol=selected_symbol, timeframe=tf)
                 if res:
@@ -2514,12 +2754,19 @@ if signal_result:
                         trend, color = "BULLISH 🟢", "#10b981"
                     elif res.is_bearish:
                         trend, color = "BEARISH 🔴", "#ef4444"
-            return tf, trend, color
+                # RSI ช่วยยืนยันโมเมนตัมของแต่ละกรอบเวลา
+                try:
+                    rsi_val = indicator_service.calculate_rsi(tf_df, 14)
+                except Exception:
+                    rsi_val = None
+            return tf, trend, color, rsi_val
 
         mtf_results = {}
+        mtf_rsi = {}
         with ThreadPoolExecutor(max_workers=min(len(mtf_tfs), 6)) as _pool:
-            for _tf, _trend, _col in _pool.map(_mtf_analyze_one, mtf_tfs):
+            for _tf, _trend, _col, _rsi in _pool.map(_mtf_analyze_one, mtf_tfs):
                 mtf_results[_tf] = (_trend, _col)
+                mtf_rsi[_tf] = _rsi
 
         for row in mtf_rows:
             row_cols = st.columns(len(row))
@@ -2558,6 +2805,30 @@ if signal_result:
                         """,
                         unsafe_allow_html=True,
                     )
+                    # ค่า RSI ของแต่ละกรอบเวลา (ตัวช่วยยืนยันที่สอง)
+                    _rv = mtf_rsi.get(tf)
+                    if _rv is not None:
+                        _z, _zc, _ztip = _rsi_zone(_rv)
+                        st.markdown(
+                            f'<div style="text-align:center;font-size:0.78rem;color:{_zc};'
+                            f'margin-top:2px;" title="{_ztip}">RSI {float(_rv):.1f}</div>',
+                            unsafe_allow_html=True,
+                        )
+
+        # แถวสรุป RSI ทุกกรอบเวลา
+        _rsi_cells = [mtf_rsi.get(tf) for tf in mtf_tfs]
+        if any(v is not None for v in _rsi_cells):
+            st.markdown(
+                '<div style="color:#94a3b8;font-size:0.85rem;margin-top:8px;">'
+                '📊 RSI ทุกกรอบเวลา: '
+                + " · ".join(
+                    f'<b style="color:{_rsi_zone(mtf_rsi[tf])[1]}">{tf} {float(mtf_rsi[tf]):.0f}</b>'
+                    if mtf_rsi.get(tf) is not None else f'{tf} —'
+                    for tf in mtf_tfs
+                )
+                + '</div>',
+                unsafe_allow_html=True,
+            )
 
     with col_gauge:
         # หน้าปัดวัดระยะห่าง EMA แบบยืดหยุ่น (Responsive)
@@ -2825,6 +3096,20 @@ if "mtf_results" in locals():
             f'</div>',
             unsafe_allow_html=True,
         )
+
+    # 📊 RSI(14) + Divergence และ 🏗 โครงสร้างราคา — ตัวช่วยยืนยันที่สอง/สาม
+    _df_now = locals().get("df_ema_full")
+    if _df_now is not None and len(_df_now) > 0:
+        try:
+            _rsi_data = indicator_service.compute_rsi_divergence(_df_now, 14)
+            st.markdown(_rsi_html(_rsi_data, selected_tf), unsafe_allow_html=True)
+        except Exception as _e:
+            logger.warning(f"แผง RSI แสดงไม่ได้: {_e}")
+        try:
+            _ms = compute_market_structure(_df_now)
+            st.markdown(_market_structure_html(_ms, selected_tf), unsafe_allow_html=True)
+        except Exception as _e:
+            logger.warning(f"แผงโครงสร้างราคาแสดงไม่ได้: {_e}")
 
     # 🌡️ เกจวัดความผันผวน (ATR ปัจจุบัน vs เฉลี่ยระยะยาว) — แสดงเสมอเมื่อมีข้อมูล
     if _atrv:
