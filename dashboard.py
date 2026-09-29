@@ -1020,11 +1020,37 @@ def _volatility_html(atr_now: float, atr_base: Optional[float], v: dict) -> str:
     )
 
 
+# Trading Sessions: นิยามเวลา "ตามเขตเวลาตลาด" ของแต่ละตลาด (ระบบแปลงเป็นเวลาไทยให้อัตโนมัติ
+# ตาม DST ของแต่ละประเทศ เช่น ลอนดอนเป็น BST (UTC+1) ช่วง มี.ค.–ต.ค. และ GMT (UTC+0) ช่วง พ.ย.–ก.พ.
 _TRADING_SESSIONS = [
-    {"name": "🌏 เอเชีย (Tokyo)", "short": "เอเชีย", "start": 7 * 60, "end": 16 * 60, "color": "#38bdf8"},
-    {"name": "🇬🇧 ลอนดอน (London)", "short": "ลอนดอน", "start": 14 * 60, "end": 23 * 60, "color": "#a78bfa"},
-    {"name": "🗽 นิวยอร์ก (New York)", "short": "นิวยอร์ก", "start": 19 * 60 + 30, "end": 4 * 60, "color": "#fbbf24"},
+    {"name": "🌏 เอเชีย (Tokyo)", "short": "เอเชีย", "tz": "Asia/Tokyo",
+     "start": 9 * 60, "end": 18 * 60, "color": "#38bdf8"},
+    {"name": "🇬🇧 ลอนดอน (London)", "short": "ลอนดอน", "tz": "Europe/London",
+     "start": 8 * 60, "end": 17 * 60, "color": "#a78bfa"},
+    {"name": "🗽 นิวยอร์ก (New York)", "short": "นิวยอร์ก", "tz": "America/New_York",
+     "start": 8 * 60 + 30, "end": 17 * 60, "color": "#fbbf24"},
 ]
+
+
+def _tz_offset_minutes(tz_name: str, at_dt) -> int:
+    """คืนค่า UTC offset (นาที) ของเขตเวลานั้น ณ เวลาที่ระบุ (คำนึงถึง DST อัตโนมัติ)"""
+    try:
+        from zoneinfo import ZoneInfo
+
+        off = at_dt.astimezone(ZoneInfo(tz_name)).utcoffset()
+        return int(off.total_seconds() // 60) if off else 0
+    except Exception:
+        return 0
+
+
+def _tz_abbrev(tz_name: str, at_dt) -> str:
+    """คืนชื่อย่อเขตเวลา เช่น BST / GMT / EDT (กันคนอ่านสับสนว่าเวลาไหน)"""
+    try:
+        from zoneinfo import ZoneInfo
+
+        return at_dt.astimezone(ZoneInfo(tz_name)).tzname() or tz_name
+    except Exception:
+        return tz_name
 
 
 def _session_intervals(start: int, end: int) -> list:
@@ -1066,10 +1092,15 @@ def compute_trading_sessions(now=None) -> dict:
     now = now or datetime.datetime.now(tz)
     now_m = now.hour * 60 + now.minute
     is_weekend = now.weekday() >= 5
+    app_off = _tz_offset_minutes(getattr(tz, "key", None) or "Asia/Bangkok", now)
 
     sessions = []
     for s in _TRADING_SESSIONS:
-        start, end = s["start"], s["end"]
+        # แปลงเวลาเปิด/ปิดของตลาด (ตามเขตเวลาตลาด) เป็นเวลาไทย ณ ปัจจุบัน (คำนึง DST)
+        off = _tz_offset_minutes(s["tz"], now)
+        start = (s["start"] - off + app_off) % 1440
+        end = (s["end"] - off + app_off) % 1440
+        s = {**s, "start": start, "end": end, "abbrev": _tz_abbrev(s["tz"], now)}
         wrap = end <= start
         if wrap:
             active = now_m >= start or now_m < end
@@ -1140,7 +1171,7 @@ def _sessions_html(info: dict) -> str:
 
     rows = ""
     for s in info["sessions"]:
-        time_range = f"{_hhmm(s['start'])}–{_hhmm(s['end'])} น."
+        time_range = f"{_hhmm(s['start'])}–{_hhmm(s['end'])} น. ({s.get('abbrev', '')})"
         if s["active"]:
             st_txt = (
                 f'<span style="color:{s["color"]};font-weight:700;">● เปิดอยู่ · '
@@ -1229,6 +1260,19 @@ def _sessions_html(info: dict) -> str:
             f'</div>'
         )
 
+    _gold_note = (
+        f'🥇 <b>ช่วงทองคำ (XAUUSD) เคลื่อนไหวแรงที่สุด:</b> ช่วง Overlap '
+        f'ลอนดอน × นิวยอร์ก — ปริมาณหนาแน่น สเปรดแคบ เหมาะวางแผนเทรดรอบใหญ่'
+    )
+    for o in overlaps:
+        if "นิวยอร์ก" in o["label"] and "ลอนดอน" in o["label"]:
+            _gold_note = (
+                f'🥇 <b>ช่วงทองคำ (XAUUSD) เคลื่อนไหวแรงที่สุด:</b> '
+                f'{_hhmm(o["start"])}–{_hhmm(o["end"])} น. (เวลาไทย) — ช่วงลอนดอนเปิดทับนิวยอร์ก '
+                f'ปริมาณหนาแน่น สเปรดแคบ เหมาะวางแผนเทรดรอบใหญ่'
+            )
+            break
+
     return (
         f'<div style="background:rgba(15,23,42,0.9);border:1px solid rgba(255,255,255,0.08);'
         f'border-radius:14px;padding:16px 20px;margin:12px 0 6px 0;">'
@@ -1238,10 +1282,10 @@ def _sessions_html(info: dict) -> str:
         f'{banner}{rows}{overlap_rows}'
         f'<div style="margin-top:12px;padding:10px 14px;border-left:3px solid #fbbf24;'
         f'background:rgba(251,191,36,0.1);border-radius:6px;color:#fde68a;font-size:0.93rem;">'
-        f'🥇 <b>ช่วงทองคำ (XAUUSD) เคลื่อนไหวแรงที่สุด:</b> 19:00–23:30 น. (เวลาไทย) '
-        f'— ช่วงลอนดอนเปิดทับนิวยอร์ก ปริมาณหนาแน่น สเปรดแคบ เหมาะวางแผนเทรดรอบใหญ่</div>'
+        f'{_gold_note}</div>'
         f'<div style="margin-top:8px;color:#64748b;font-size:0.78rem;">'
-        f'*เวลาโดยประมาณ (ICT UTC+7) ช่วง DST ต่างประเทศอาจเลื่อน ±1 ชม. อ้างอิงตามประกาศโบรกเกอร์</div>'
+        f'*เวลาคำนวณอัตโนมัติตาม DST ของแต่ละตลาด (ระบุชื่อเขตเวลากำกับ) '
+        f'และเทียบเป็นเวลาไทย (ICT UTC+7)</div>'
         f'</div>'
     )
 
