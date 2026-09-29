@@ -184,6 +184,26 @@ class IndicatorService:
         return df
 
     # ------------------------------------------------------------------
+    def _advance_last_cross(self, state_key: str, record, new_time, new_signal) -> Optional[dict]:
+        """
+        เลื่อน "เข็ม" last_cross ในฐานข้อมูลสัญญาณไปที่ EMA Cross ครั้งล่าสุด
+        (บันทึกถาวร ไม่ prune ตาม 24 ชม. — เพื่อบอกเวลาครั้งล่าสุดได้ทุกไทม์เฟรม)
+        :return: dict ใหม่ที่บันทึกลง state หรือ None ถ้าไม่มีอะไรใหม่กว่าเดิม
+        """
+        old_last = record.get("last_cross") if isinstance(record, dict) else None
+        new_lc = {"candle_time": _to_aware_utc(new_time).isoformat(), "signal": new_signal}
+        if old_last is not None:
+            try:
+                if _to_aware_utc(old_last["candle_time"]) >= _to_aware_utc(new_time):
+                    return None
+            except Exception:
+                pass
+        merged = dict(record) if isinstance(record, dict) else {}
+        merged["last_cross"] = new_lc
+        merged["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        _save_cross_state({state_key: merged})
+        return new_lc
+
     # analyze(): สำหรับ Dashboard ยังคงเดิม — แสดงสถานะล่าสุดของแท่งเทียนล่าสุด
     # ------------------------------------------------------------------
     def analyze(
@@ -234,6 +254,14 @@ class IndicatorService:
 
         cross_signal = last_cross_signal
         cross_time_for_result = last_cross_time if last_cross_time is not None else curr_time
+
+        # เลื่อนเข็ม last_cross (ครั้งล่าสุดที่เกิด Cross) ลงฐานข้อมูลสัญญาณ
+        # เพื่อให้ทุกไทม์เฟรมบนหน้า Dashboard บอกเวลาที่ตัดกันล่าสุดได้
+        # แม้ Cross จะเก่ากว่าช่วงข้อมูลที่แสดงอยู่ (สแกนจากหน้าต่างข้อมูลเต็ม 800 แท่ง)
+        if last_cross_signal != CrossSignal.NONE:
+            _state_key = f"{symbol}::{timeframe}"
+            _st_entries = _load_cross_state()
+            self._advance_last_cross(_state_key, _st_entries.get(_state_key), last_cross_time, last_cross_signal.value)
 
         is_new_signal = False
         if cross_signal != CrossSignal.NONE:
@@ -367,19 +395,11 @@ class IndicatorService:
         _last_idx, _last_sig = crosses[-1]
         _last_cross_time = _to_aware_utc(df_calc.iloc[_last_idx]["time"])
         _old_last_cross = record.get("last_cross") if isinstance(record, dict) else None
-        _last_cross_changed = False
-        new_last_cross = None
-        if _old_last_cross is None:
-            _last_cross_changed = True
-            new_last_cross = {"candle_time": _last_cross_time.isoformat(), "signal": _last_sig.value}
-        else:
-            try:
-                _old_last_time = _to_aware_utc(_old_last_cross["candle_time"])
-            except Exception:
-                _old_last_time = None
-            if _old_last_time is None or _last_cross_time > _old_last_time:
-                _last_cross_changed = True
-                new_last_cross = {"candle_time": _last_cross_time.isoformat(), "signal": _last_sig.value}
+        # เลื่อนเข็ม last_cross ไปครั้งล่าสุด (บันทึกลง state ทันที ไม่รอให้ผ่าน 24 ชม.)
+        new_last_cross = self._advance_last_cross(state_key, record, _last_cross_time, _last_sig.value)
+        _last_cross_changed = new_last_cross is not None
+        if not _last_cross_changed:
+            new_last_cross = _old_last_cross
 
         now_utc = datetime.datetime.now(datetime.timezone.utc)
         twenty4h_ago = now_utc - datetime.timedelta(hours=24)
@@ -421,14 +441,7 @@ class IndicatorService:
             ))
 
         if not candidates:
-            # ไม่พบ Cross ใหม่ในช่วง 24 ชม. แต่ถ้าประวัติ Cross ล่าสุดในข้อมูลใหม่กว่า
-            # ที่บันทึกไว้ ก็ยังต้องอัปเดต last_cross (บอกเวลาครั้งล่าสุดที่เกิด)
-            if _last_cross_changed:
-                _merged = dict(record) if isinstance(record, dict) else {}
-                _merged.pop("last_cross", None)  # จะเขียนทับใหม่ด้านล่าง
-                _merged["last_cross"] = new_last_cross
-                _merged["updated_at"] = now_utc.isoformat()
-                _save_cross_state({state_key: _merged})
+            # ไม่พบ Cross ใหม่ในช่วง 24 ชม. (เข็ม last_cross อัปเดตไปแล้วข้างบนถ้ามีใหม่)
             return []
 
         # บันทึก Cross ที่พบทั้งหมดลง state (เลื่อน anchor ข้ามช่วงที่ bot หยุด)
