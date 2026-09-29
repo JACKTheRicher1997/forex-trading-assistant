@@ -432,17 +432,37 @@ def actual_color_code(item: ForexNewsItem) -> str:
     return ""
 
 
-def render_html_table(rows: list, colors: list, actual_col: str) -> str:
+def render_html_table(rows: list, colors: list, actual_col: str, band_keys: list = None) -> str:
     """
     สร้าง HTML Table ที่อ่านง่าย ตัวเลขใหญ่ พอดีกับคอลัมน์
     :param rows: list ของ dict (แต่ละ dict คือ 1 แถว)
     :param colors: list สีของคอลัมน์ Actual ตามแถว (ว่าง = สีปกติ)
     :param actual_col: ชื่อคอลัมน์ Actual ที่จะระบายสี
+    :param band_keys: ลิสต์คีย์กลุ่มแถบสี (เช่น วันที่) เพื่อแบ่งแถว/วันในตารางให้ดูแยกง่าย
+                      แถวที่คีย์ต่างจากแถวบน จะได้เส้นคั่นสีเหลือง + สลับสีพื้นหลังรายวัน
     :return: HTML string
     """
     if not rows:
         return ""
     columns = list(rows[0].keys())
+
+    # คำนวณแถบสีพื้นหลังสลับตามกลุ่มวัน + เส้นคั่นสีเหลืองตอนเปลี่ยนวัน
+    row_style = [""] * len(rows)
+    if band_keys:
+        band_id = 0
+        prev_key = None
+        for i, key in enumerate(band_keys[: len(rows)]):
+            if i > 0 and prev_key is not None and key != prev_key:
+                band_id += 1
+            prev_key = key
+            bg = "rgba(59,130,246,0.07)" if band_id % 2 == 0 else "rgba(255,255,255,0.02)"
+            sep = (
+                "border-top:2px solid #fbbf24;"
+                if i > 0 and band_keys[i] != band_keys[i - 1]
+                else ""
+            )
+            row_style[i] = f"background:{bg};{sep}"
+
     thead = "".join(f"<th>{c}</th>" for c in columns)
     tbody = ""
     for i, row in enumerate(rows):
@@ -456,7 +476,7 @@ def render_html_table(rows: list, colors: list, actual_col: str) -> str:
                 )
             else:
                 cells += '<td style="text-align:center;">' + str(val) + "</td>"
-        tbody += f"<tr>{cells}</tr>"
+        tbody += f"<tr style='{row_style[i]}'>{cells}</tr>"
     return (
         '<div class="news-table-wrap">'
         f'<table class="news-table"><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table>'
@@ -974,7 +994,12 @@ with tab_weekly:
             )
             actual_colors.append(actual_color_code(n))
         st.markdown(
-            render_html_table(table_data, actual_colors, "ตัวเลขจริง (Actual)"),
+            render_html_table(
+                table_data,
+                actual_colors,
+                "ตัวเลขจริง (Actual)",
+                band_keys=[n.date_local.strftime("%Y-%m-%d") for n in red_news_this_week],
+            ),
             unsafe_allow_html=True,
         )
     else:
