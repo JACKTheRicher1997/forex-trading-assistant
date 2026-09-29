@@ -322,6 +322,11 @@ def _candle_as_naive_utc(ts):
     return ts.astimezone(datetime.timezone.utc).replace(tzinfo=None)
 
 
+def _fmt_ts_bangkok(ts) -> str:
+    """แปลง timestamp เป็นเวลาไทย (ICT UTC+7) สำหรับแสดงผล"""
+    return (_candle_as_naive_utc(ts) + datetime.timedelta(hours=7)).strftime("%Y-%m-%d %H:%M น.")
+
+
 def _fmt_duration(delta) -> str:
     """จัดรูปแบบระยะเวลาต่อเนื่องให้อ่านง่าย (เดือน/สัปดาห์/วัน/ชั่วโมง)"""
     total = max(0, int(delta.total_seconds()))
@@ -849,19 +854,36 @@ st.markdown("## 📊 1. สถานะอินดิเคเตอร์ & �
 
 if signal_result:
     # สรุปเวลาแท่งเทียนปิด (ICT) ที่เกิดการตัดกันล่าสุด + ระยะเวลาที่ต่อเนื่องมาแล้ว
-    # แสดงใต้แบนเนอร์เทรน (หายไปเมื่อ analyze() หา Cross ล่าสุดไม่เจอ -> ต้องสแกนทั้งหน้าต่าง)
+    # แสดงใต้แบนเนอร์เทรนเสมอ (ถ้าไม่พบ Cross จะแจ้งช่วงข้อมูลแทน ไม่ปล่อยว่าง)
     cross_occur = ""
     if signal_result.cross_signal == CrossSignal.CROSS_UP:
+        _dur = _fmt_duration(datetime.datetime.utcnow() - _candle_as_naive_utc(signal_result.candle_time))
+        if signal_result.is_bullish:
+            _extra = f" — ต่อเนื่องมาแล้ว {_dur}"
+        else:
+            _extra = " — แต่เทรนปัจจุบันหันกลับแล้ว (รอ Cross ใหม่บนแท่งที่ปิด)"
         cross_occur = (
             f"🚀 เกิดการตัดขึ้น (CROSS UP) ในแท่งเทียนที่ปิด เวลา "
-            f"<b>{signal_result._format_candle_time_thai()}</b> — "
-            f"ต่อเนื่องมาแล้ว {_fmt_duration(datetime.datetime.utcnow() - _candle_as_naive_utc(signal_result.candle_time))}"
+            f"<b>{signal_result._format_candle_time_thai()}</b>{_extra}"
         )
     elif signal_result.cross_signal == CrossSignal.CROSS_DOWN:
+        _dur = _fmt_duration(datetime.datetime.utcnow() - _candle_as_naive_utc(signal_result.candle_time))
+        if signal_result.is_bearish:
+            _extra = f" — ต่อเนื่องมาแล้ว {_dur}"
+        else:
+            _extra = " — แต่เทรนปัจจุบันหันกลับแล้ว (รอ Cross ใหม่บนแท่งที่ปิด)"
         cross_occur = (
             f"🔻 เกิดการตัดลง (CROSS DOWN) ในแท่งเทียนที่ปิด เวลา "
-            f"<b>{signal_result._format_candle_time_thai()}</b> — "
-            f"ต่อเนื่องมาแล้ว {_fmt_duration(datetime.datetime.utcnow() - _candle_as_naive_utc(signal_result.candle_time))}"
+            f"<b>{signal_result._format_candle_time_thai()}</b>{_extra}"
+        )
+    else:
+        # ไม่พบ Cross ในช่วงข้อมูลที่โหลดมา -> ไม่ปล่อยว่าง ให้แจ้งช่วงข้อมูลแทน
+        # (มักเกิดเพราะ Cross เก่าเกินขอบข้อมูล หรือเพิ่งตัดบนแท่งที่ยังไม่ปิด)
+        _n_bars = len(df_rates) if df_rates is not None else 0
+        _start_str = _fmt_ts_bangkok(df_rates["time"].iloc[0]) if (df_rates is not None and len(df_rates) > 0) else "-"
+        cross_occur = (
+            f"ℹ️ ยังไม่พบการตัดกัน (CROSS) ในข้อมูล {_n_bars} แท่งล่าสุด "
+            f"(ช่วงข้อมูลเริ่ม {_start_str}) — แนวโน้มนี้ต่อเนื่องมาก่อนหน้าข้อมูลที่แสดง หรือกำลังตัดกันบนแท่งที่ยังไม่ปิด"
         )
 
     # Banner แสดงเทรนแบบเต็มความกว้างหน้าจอ
