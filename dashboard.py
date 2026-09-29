@@ -521,6 +521,130 @@ _NEWS_MEANING_TH = {
 _TITLE_COLUMN_KEYS = ("ชื่อข่าว", "ชื่อข่าวเศรษฐกิจ", "ชื่อข่าว (ไทย)")
 
 
+def compute_trade_verdict(
+    mtf_results: dict,
+    selected_tf: str,
+    red_news_this_week: list,
+) -> dict:
+    """
+    คำนวณสรุปทิศทางเทรดรวม (Trade Verdict) จาก:
+    - MTF Trend: ถ่วงน้ำหนักตามกรอบเวลายิ่งใหญ่ยิ่งสำคัญ (M5=1 ... D1=5)
+    - ข่าวแดงที่กำลังจะออก (< 30 นาที) -> บังคับ NO TRADE
+    :return: dict สำหรับ render แผง verdict
+    """
+    weights = {"M5": 1, "M15": 2, "H1": 3, "H4": 4, "D1": 5}
+    score, total_w = 0, 0
+    bull_frames, bear_frames, neutral_frames = [], [], []
+    per_tf = {}
+    for tf in ("M5", "M15", "H1", "H4", "D1"):
+        trend_str, _color = mtf_results.get(tf, ("NEUTRAL", "#94a3b8"))
+        w = weights.get(tf, 1)
+        if trend_str.startswith("BULLISH"):
+            per_tf[tf] = ("▲", "#10b981")
+            score += w
+            total_w += w
+            bull_frames.append(tf)
+        elif trend_str.startswith("BEARISH"):
+            per_tf[tf] = ("▼", "#ef4444")
+            score -= w
+            total_w += w
+            bear_frames.append(tf)
+        else:
+            per_tf[tf] = ("—", "#94a3b8")
+            neutral_frames.append(tf)
+
+    ratio = (score / total_w) if total_w else 0.0
+    confidence = int(abs(ratio) * 100)
+
+    # ข่าวแดงบนพื้น (ข้อมูลนี้)
+    upcoming = []
+    for n in red_news_this_week:
+        try:
+            now_bkk = datetime.datetime.now(n.date_local.tzinfo)
+        except Exception:
+            now_bkk = datetime.datetime.now()
+        secs = (n.date_local - now_bkk).total_seconds()
+        if 0 < secs <= 30 * 60:
+            upcoming.append(n)
+    upcoming = sorted(upcoming, key=lambda x: x.date_local)[:5]
+
+    if upcoming:
+        verdict = "NO TRADE"
+        icon = "⛔"
+        color = "#f59e0b"
+        note = (
+            "มีข่าวแดงกำลังจะออกในไม่ถึง 30 นาที — ราคามักวิ่งแรง/แกว่งทิศทางไม่แน่นอน "
+            "ควรหลีกเลี่ยงการเข้าตำแหน่งใหม่ รอผลประกาศและตลาดนิ่งลงก่อน"
+        )
+    elif ratio >= 0.25:
+        verdict = "BUY"
+        icon = "🟢"
+        color = "#10b981"
+        note = f"แนวโน้มน้ำหนักขาขึ้น ({len(bull_frames)} เฟรมเห็นพ้องขาขึ้น) — มองหาโอกาส Buy เมื่อราคาย่อตัว"
+    elif ratio <= -0.25:
+        verdict = "SELL"
+        icon = "🔴"
+        color = "#ef4444"
+        note = f"แนวโน้มน้ำหนักขาลง ({len(bear_frames)} เฟรมเห็นพ้องขาลง) — มองหาโอกาส Sell เมื่อราคาดีดตัวขึ้น"
+    else:
+        verdict = "NEUTRAL"
+        icon = "⚪"
+        color = "#94a3b8"
+        note = "สัญญาณหลายกรอบเวลาไม่ลงทางเดียวกัน — รอทิศทางชัดเจนก่อนเข้าออเดอร์"
+
+    return {
+        "verdict": verdict,
+        "icon": icon,
+        "color": color,
+        "confidence": confidence,
+        "note": note,
+        "per_tf": per_tf,
+        "bull_frames": bull_frames,
+        "bear_frames": bear_frames,
+        "neutral_frames": neutral_frames,
+        "upcoming": upcoming,
+        "selected_tf": selected_tf,
+    }
+
+
+def _verdict_panel_html(v: dict, countdown_fn) -> str:
+    """สร้าง HTML แผงสรุปทิศทางเทรดแบบเต็มความกว้าง"""
+    dots = " ".join(
+        f'<span style="margin:0 6px;"><b>{tf}</b> <span style="color:{color};font-weight:800;">{sym}</span></span>'
+        for tf, (sym, color) in v["per_tf"].items()
+    )
+    conf_color = v["color"] if v["confidence"] >= 50 else "#f59e0b"
+    news_block = ""
+    if v["upcoming"]:
+        lines = "".join(
+            f"• 🔴 {countdown_fn(n.date_local)} | [{n.country}] {n.title}<br/>"
+            for n in v["upcoming"]
+        )
+        news_block = (
+            f'<div style="margin-top:12px;padding:10px 14px;border-left:3px solid #ef4444;'
+            f'background:rgba(239,68,68,0.12);border-radius:6px;color:#fecaca;font-size:0.95rem;">'
+            f"<b>⏰ ข่าวแดงใกล้ถึงเวลา:</b><br/>{lines}</div>"
+        )
+    return f"""
+    <div style="background:rgba(15,23,42,0.9);border:1px solid {v['color']};border-radius:14px;
+                padding:18px 22px;margin:16px 0 6px 0;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+            <span style="font-size:1.3rem;font-weight:800;color:#f8fafc;">🎯 สรุปทิศทางเทรด (Trade Verdict)</span>
+            <span style="font-size:1.5rem;font-weight:800;color:{v['color']};">{v['icon']} {v['verdict']}</span>
+        </div>
+        <div style="margin-top:10px;">
+            <div style="font-size:0.85rem;color:#94a3b8;margin-bottom:3px;">ความสอดคล้องของกรอบเวลา (Confidence): {v['confidence']}%</div>
+            <div style="height:10px;background:rgba(255,255,255,0.08);border-radius:5px;overflow:hidden;">
+                <div style="height:100%;width:{v['confidence']}%;background:{conf_color};border-radius:5px;"></div>
+            </div>
+        </div>
+        <div style="margin-top:12px;font-size:1.05rem;color:#cbd5e1;">{dots}</div>
+        <div style="margin-top:10px;color:#e2e8f0;font-size:1rem;line-height:1.5;">💡 {v['note']}</div>
+        {news_block}
+    </div>
+    """
+
+
 def _news_title_html(title: str) -> str:
     """ทำให้ชื่อข่าวกดเปิดดูคำอธิบายภาษาไทยสั้น ๆ ได้ (Details/Summary)"""
     meaning = _NEWS_MEANING_TH.get(title)
@@ -937,6 +1061,14 @@ if signal_result:
             """,
             unsafe_allow_html=True
         )
+
+    # 🎯 สรุปทิศทางเทรด (Trade Verdict) — ภาพรวมว่าเทรดไปทางไหน
+    verdict = compute_trade_verdict(mtf_results, selected_tf, red_news_this_week)
+    st.markdown(
+        _verdict_panel_html(verdict, countdown_to_news),
+        unsafe_allow_html=True,
+    )
+
 else:
     st.warning(
         "⚠️ ไม่สามารถดึงข้อมูลราคาได้ในขณะนี้ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตหรือลองใหม่ภายหลัง"
