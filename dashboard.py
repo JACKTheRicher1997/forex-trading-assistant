@@ -10,6 +10,8 @@ Trading Assistant & Alert System - Web Dashboard
 
 import datetime
 import calendar
+import json
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -355,6 +357,60 @@ def _resolve_app_tz():
         return ZoneInfo(tz_name), tz_name
     except Exception:
         return datetime.timezone(datetime.timedelta(hours=7)), "Asia/Bangkok"
+
+
+def _load_cross_state_cache() -> dict:
+    """โหลดฐานข้อมูลสัญญาณ EMA Cross (state/ema_cross_state.json) ที่ bot สะสมไว้ข้าม run"""
+    try:
+        _p = Path(__file__).resolve().parent / "state" / "ema_cross_state.json"
+        if _p.exists():
+            with open(_p, "r", encoding="utf-8") as _f:
+                _data = json.load(_f)
+            _entries = _data.get("entries")
+            if isinstance(_entries, dict):
+                return _entries
+    except Exception:
+        pass
+    return {}
+
+
+def _last_cross_from_state(symbol: str, timeframe: str):
+    """
+    ค้นหา EMA Cross "ครั้งล่าสุด" ของ symbol::timeframe จากฐานข้อมูลสัญญาณ
+    (มีประโยชน์เมื่อไม่มี Cross อยู่ในช่วงข้อมูลที่โหลดมาเพราะเก่าเกินขอบข้อมูล)
+    """
+    entries = _load_cross_state_cache()
+    if not entries:
+        return None
+    record = entries.get(f"{symbol}::{timeframe}")
+    if record is None:
+        sym_up = symbol.upper()
+        for k, v in entries.items():
+            parts = str(k).split("::", 1)
+            if len(parts) == 2 and parts[1] == timeframe and parts[0].upper() == sym_up:
+                record = v
+                break
+    if not isinstance(record, dict):
+        return None
+    alerted = record.get("alerted")
+    if isinstance(alerted, list) and alerted:
+        last = alerted[-1]
+        if isinstance(last, dict) and last.get("candle_time"):
+            return last
+    if record.get("candle_time"):
+        return {"candle_time": record["candle_time"], "signal": record.get("signal", "")}
+    return None
+
+
+def _state_candle_to_naive_utc(ts):
+    """แปลง timestamp จากไฟล์ state (ISO string) เป็น naive UTC สำหรับคำนวณระยะเวลา"""
+    if isinstance(ts, datetime.datetime):
+        return _candle_as_naive_utc(ts)
+    try:
+        dt = datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except Exception:
+        return None
+    return _candle_as_naive_utc(dt)
 
 
 def render_live_clock(symbol: str) -> None:
@@ -1293,10 +1349,35 @@ if signal_result:
         # (มักเกิดเพราะ Cross เก่าเกินขอบข้อมูล หรือเพิ่งตัดบนแท่งที่ยังไม่ปิด)
         _n_bars = len(df_rates) if df_rates is not None else 0
         _start_str = _fmt_ts_bangkok(df_rates["time"].iloc[0]) if (df_rates is not None and len(df_rates) > 0) else "-"
-        cross_occur = (
-            f"ℹ️ ยังไม่พบการตัดกัน (CROSS) ในข้อมูล {_n_bars} แท่งล่าสุด "
-            f"(ช่วงข้อมูลเริ่ม {_start_str}) — แนวโน้มนี้ต่อเนื่องมาก่อนหน้าข้อมูลที่แสดง หรือกำลังตัดกันบนแท่งที่ยังไม่ปิด"
-        )
+        _last_cross = _last_cross_from_state(selected_symbol, selected_tf)
+        if _last_cross:
+            _lc_naive = _state_candle_to_naive_utc(_last_cross["candle_time"])
+            _lc_sig = str(_last_cross.get("signal", "")).upper()
+            if _lc_sig == "CROSS_UP":
+                _lc_mark = "🚀 CROSS UP (ตัดขึ้น)"
+            elif _lc_sig == "CROSS_DOWN":
+                _lc_mark = "🔻 CROSS DOWN (ตัดลง)"
+            else:
+                _lc_mark = "EMA Cross"
+            if _lc_naive is not None:
+                _lc_dur = _fmt_duration(datetime.datetime.utcnow() - _lc_naive)
+                cross_occur = (
+                    f"ℹ️ ยังไม่พบการตัดกัน (CROSS) ในข้อมูล {_n_bars} แท่งล่าสุด "
+                    f"(ช่วงข้อมูลเริ่ม {_start_str})<br>"
+                    f"📌 <b>EMA Cross ครั้งล่าสุด:</b> {_lc_mark} เวลา "
+                    f"<b>{_fmt_ts_bangkok(_lc_naive)}</b> (ผ่านมาแล้ว {_lc_dur}) "
+                    f"— แนวโน้มนี้ต่อเนื่องมาก่อนหน้าข้อมูลที่แสดง หรือกำลังตัดกันบนแท่งที่ยังไม่ปิด"
+                )
+            else:
+                cross_occur = (
+                    f"ℹ️ ยังไม่พบการตัดกัน (CROSS) ในข้อมูล {_n_bars} แท่งล่าสุด "
+                    f"(ช่วงข้อมูลเริ่ม {_start_str}) — แนวโน้มนี้ต่อเนื่องมาก่อนหน้าข้อมูลที่แสดง หรือกำลังตัดกันบนแท่งที่ยังไม่ปิด"
+                )
+        else:
+            cross_occur = (
+                f"ℹ️ ยังไม่พบการตัดกัน (CROSS) ในข้อมูล {_n_bars} แท่งล่าสุด "
+                f"(ช่วงข้อมูลเริ่ม {_start_str}) — แนวโน้มนี้ต่อเนื่องมาก่อนหน้าข้อมูลที่แสดง หรือกำลังตัดกันบนแท่งที่ยังไม่ปิด"
+            )
 
     # Banner แสดงเทรนแบบเต็มความกว้างหน้าจอ
     if signal_result.is_bullish:
