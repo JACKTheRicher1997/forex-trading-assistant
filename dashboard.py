@@ -1479,6 +1479,195 @@ def _journal_html(items: list, s: dict) -> str:
 
 
 # ==========================================
+# แจ้งเตือนราคาตามที่ผู้ใช้ตั้ง (Price Alert -> LINE)
+# ==========================================
+_ALERT_FILE = Path(__file__).resolve().parent / "state" / "price_alert.json"
+
+
+def _load_alerts() -> dict:
+    """โหลดการตั้งแจ้งเตือนราคา"""
+    try:
+        if _ALERT_FILE.exists():
+            with open(_ALERT_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                data.setdefault("alerts", [])
+                return data
+    except Exception as e:
+        logger.warning(f"อ่านไฟล์ตั้งแจ้งเตือนราคาไม่ได้: {e}")
+    return {"alerts": []}
+
+
+def _save_alerts(data: dict) -> None:
+    """บันทึกการตั้งแจ้งเตือนราคา"""
+    try:
+        _ALERT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(_ALERT_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"บันทึกไฟล์ตั้งแจ้งเตือนราคาไม่สำเร็จ: {e}")
+
+
+def arm_price_alert(symbol: str, timeframe_str: str, direction: str, target: float) -> dict:
+    """
+    ตั้งแจ้งเตือนราคา (ยังไม่ยิงจนกว่าราคาจะแตะเป้าหมาย)
+    :param direction: "above" = แจ้งเมื่อราคาขึ้นแตะเป้า, "below" = แจ้งเมื่อราคาลงแตะเป้า
+    """
+    try:
+        target = float(target)
+    except Exception:
+        return {}
+    if target <= 0:
+        return {}
+    data = _load_alerts()
+    alert = {
+        "id": f"{symbol}_{timeframe_str}_{direction}_{target:.6f}_{int(datetime.datetime.now().timestamp())}",
+        "symbol": symbol,
+        "timeframe": timeframe_str,
+        "direction": direction,
+        "target": target,
+        "armed_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "fired": False,
+        "fired_utc": None,
+        "fired_price": None,
+    }
+    # แทนที่การตั้งเดิมของ symbol/timeframe เดียวกัน
+    data["alerts"] = [
+        a for a in data.get("alerts", [])
+        if not (a.get("symbol") == symbol and a.get("timeframe") == timeframe_str)
+    ]
+    data["alerts"].append(alert)
+    # เก็บประวัติเฉพาะที่ยิงแล้ว 20 รายการล่าสุด
+    _save_alerts(data)
+    return alert
+
+
+def check_price_alert(symbol: str, timeframe_str: str, df=None, close_price=None) -> Optional[dict]:
+    """
+    ตรวจว่าราคาแตะเป้าหมายที่ตั้งไว้หรือยัง -> คืนข้อมูลการแจ้งเตือนถ้า "ยังไม่ยิง"
+    ใช้ high/low ของแท่งล่าสุด (ไวต่อกว่ารอ close แท่ง) และกันยิงซ้ำด้วยธง fired
+    """
+    data = _load_alerts()
+    for a in data.get("alerts", []):
+        if a.get("symbol") != symbol or a.get("timeframe") != timeframe_str:
+            continue
+        if a.get("fired"):
+            continue
+        target = float(a.get("target", 0) or 0)
+        if target <= 0:
+            continue
+        direction = a.get("direction", "above")
+
+        hit, hit_price = False, None
+        if df is not None and len(df) > 0:
+            try:
+                last = df.iloc[-1]
+                hi, lo = float(last["high"]), float(last["low"])
+                if direction == "above" and hi >= target:
+                    hit, hit_price = True, max(hi, target)
+                elif direction == "below" and lo <= target:
+                    hit, hit_price = True, min(lo, target)
+            except Exception:
+                pass
+        if not hit and close_price:
+            cp = float(close_price)
+            if (direction == "above" and cp >= target) or (direction == "below" and cp <= target):
+                hit, hit_price = True, cp
+        if hit:
+            a["fired"] = True
+            a["fired_utc"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            a["fired_price"] = hit_price
+            data.setdefault("history", [])
+            data["history"] = (data.get("history", []) + [a])[-20:]
+            _save_alerts(data)
+            return a
+    return None
+
+
+def clear_price_alert(symbol: str = None, timeframe_str: str = None) -> None:
+    """ล้างการตั้งแจ้งเตือน (ล้างทั้งหมด หรือเฉพาะ symbol/timeframe)"""
+    data = _load_alerts()
+    if symbol is None:
+        data["alerts"] = []
+    else:
+        data["alerts"] = [
+            a for a in data.get("alerts", [])
+            if not (a.get("symbol") == symbol and a.get("timeframe") == timeframe_str)
+        ]
+    _save_alerts(data)
+
+
+def _price_alert_message(a: dict) -> str:
+    """สร้างข้อความแจ้งเตือนราคาแบบอ่านง่าย"""
+    try:
+        tz = _resolve_app_tz()[0]
+        now_txt = datetime.datetime.now(tz).strftime("%d/%m/%Y %H:%M น.")
+    except Exception:
+        now_txt = datetime.datetime.now().strftime("%d/%m/%Y %H:%M น.")
+    up = a.get("direction") == "above"
+    arrow = "📈 ขึ้น" if up else "📉 ลง"
+    try:
+        fired_txt = f'{a["fired_price"]:,.2f}'
+    except Exception:
+        fired_txt = a.get("target")
+    return (
+        f'{arrow} แจ้งเตือนราคา {a.get("symbol")} ({a.get("timeframe")})\n'
+        f'🎯 เป้าหมาย: {a.get("target"):,.2f}\n'
+        f'💥 ราคาล่าสุด: {fired_txt}\n'
+        f'🕐 {now_txt}\n'
+        f'— Forex Trading Assistant'
+    )
+
+
+def _price_alert_status_html(alert: Optional[dict], current_price=None) -> str:
+    """สถานะการตั้งแจ้งเตือนราคาปัจจุบัน (ยังรอ / ยิงแล้ว) + ราคาปัจจุบันเทียบเป้า"""
+    if not alert:
+        return ""
+    try:
+        cur_txt = f' · ราคาปัจจุบัน {float(current_price):,.2f}' if current_price else ""
+    except Exception:
+        cur_txt = ""
+
+    if alert.get("fired"):
+        return (
+            '<div style="background:rgba(16,185,129,0.12);border-left:3px solid #10b981;'
+            'border-radius:6px;padding:8px 12px;margin:8px 0;font-size:0.9rem;color:#a7f3d0;">'
+            f'✅ แจ้งเตือนราคา {alert.get("symbol")} ที่ {alert.get("target"):,.2f} '
+            f'ถูกส่งไป LINE แล้ว (ยิงครั้งเดียวต่อเป้าหมาย){cur_txt}</div>'
+        )
+    target = float(alert.get("target", 0) or 0)
+    direction = alert.get("direction", "above")
+    up = direction == "above"
+    passed = False
+    if current_price:
+        try:
+            cp = float(current_price)
+            passed = cp >= target if up else cp <= target
+        except Exception:
+            passed = False
+    warn = (
+        '<br/>⚠️ ราคาปัจจุบันผ่านเป้าหมายแล้ว — ระบบจะแจ้งเตือนทันทีในรอบอัปเดตถัดไป'
+        if passed
+        else ""
+    )
+    label = "ราคาขึ้นแตะ" if up else "ราคาลงแตะ"
+    diff_txt = ""
+    if current_price and not passed:
+        try:
+            cp = float(current_price)
+            gap = abs(target - cp)
+            diff_txt = f' · ห่างอีก {gap:,.2f}'
+        except Exception:
+            diff_txt = ""
+    return (
+        '<div style="background:rgba(56,189,248,0.12);border-left:3px solid #38bdf8;'
+        'border-radius:6px;padding:8px 12px;margin:8px 0;font-size:0.9rem;color:#bae6fd;">'
+        f'🎯 ตั้งแจ้งเตือนไว้: {label} <b>{target:,.2f}</b> ({alert.get("symbol")} '
+        f'{alert.get("timeframe")}) — กำลังรอราคาแตะ{cur_txt}{diff_txt}{warn}</div>'
+    )
+
+
+# ==========================================
 # DXY (US Dollar Index) - ตัวขับเคลื่อนทองคำ/คู่เงินฝั่ง USD
 # ==========================================
 def _ema_last(values: list, period: int) -> float:
@@ -2039,6 +2228,41 @@ with st.sidebar:
             format="%.1f",
         )
     st.caption("ใช้คำนวณขนาดไม้ (Lot) อัตโนมัติจากระยะ Stop Loss ในแผนการเทรด")
+
+    st.markdown("---")
+    st.markdown("### 🎯 แจ้งเตือนราคาที่ฉันเลือก (Price Alert)")
+    alert_dir_label = st.selectbox(
+        "เงื่อนไขการแจ้งเตือน",
+        options=["📈 ราคาขึ้นแตะเป้าหมาย", "📉 ราคาลงแตะเป้าหมาย"],
+        index=0,
+    )
+    alert_direction = "above" if alert_dir_label.startswith("📈") else "below"
+    alert_target = st.number_input(
+        "ราคาเป้าหมาย",
+        min_value=0.0001,
+        max_value=1_000_000.0,
+        value=100.0,
+        format="%.2f",
+        key="price_alert_target",
+        help="ดูราคาปัจจุบันได้ที่แผงสถานะแจ้งเตือนด้านล่างกราฟ",
+    )
+    st.caption("ระบบจะส่ง LINE ให้ 1 ครั้งเมื่อราคาแตะเป้าหมาย (ยิงซ้ำไม่ได้)")
+    col_arm, col_clear = st.columns(2)
+    with col_arm:
+        if st.button("🔔 ตั้งแจ้งเตือน", use_container_width=True, key="btn_arm_alert"):
+            _armed = arm_price_alert(selected_symbol, selected_tf, alert_direction, alert_target)
+            if _armed:
+                st.success(
+                    f'ตั้งแจ้งเตือน {selected_symbol} '
+                    f'{"ขึ้น" if alert_direction == "above" else "ลง"} '
+                    f'{alert_target:,.2f} แล้ว'
+                )
+            else:
+                st.error("ตั้งแจ้งเตือนไม่สำเร็จ — ตรวจสอบราคาเป้าหมาย")
+    with col_clear:
+        if st.button("🗑️ ยกเลิกแจ้งเตือน", use_container_width=True, key="btn_clear_alert"):
+            clear_price_alert(selected_symbol, selected_tf)
+            st.info("ยกเลิกการแจ้งเตือนราคาแล้ว")
 
     st.markdown("---")
     st.markdown("### 📲 ทดสอบการแจ้งเตือน LINE")
@@ -2621,6 +2845,39 @@ if "mtf_results" in locals():
     # 🕐 ช่วงเวลาเทรด (Trading Sessions) — แสดงเสมอ
     _sess_info = compute_trading_sessions()
     st.markdown(_sessions_html(_sess_info), unsafe_allow_html=True)
+
+    # 🎯 แจ้งเตือนราคาตามที่ผู้ใช้ตั้ง — ตรวจและส่ง LINE อัตโนมัติ (ยิงครั้งเดียวต่อเป้าหมาย)
+    try:
+        _cur_px = sr_info.get("current_close") if sr_info else None
+        _fired_alert = check_price_alert(
+            selected_symbol, selected_tf, df=locals().get("df_ema_full"), close_price=_cur_px
+        )
+        if _fired_alert:
+            _msg = _price_alert_message(_fired_alert)
+            st.markdown(_price_alert_status_html(_fired_alert, _cur_px), unsafe_allow_html=True)
+            _notif = notification_service.notifier
+            if channel_access_token and user_id:
+                _notif.channel_access_token = channel_access_token
+                _notif.user_id = user_id
+            try:
+                if notification_service.send_price_alert(_msg):
+                    st.success("ส่งการแจ้งเตือนราคาไป LINE แล้ว")
+                else:
+                    st.warning("บันทึกการแจ้งเตือนแล้ว แต่ส่ง LINE ไม่สำเร็จ (ตรวจ Token)")
+            except Exception as _e:
+                st.warning(f"ส่ง LINE ไม่สำเร็จ: {_e}")
+        else:
+            _armed_now = None
+            for _a in _load_alerts().get("alerts", []):
+                if _a.get("symbol") == selected_symbol and _a.get("timeframe") == selected_tf:
+                    _armed_now = _a
+                    break
+            if _armed_now:
+                st.markdown(
+                    _price_alert_status_html(_armed_now, _cur_px), unsafe_allow_html=True
+                )
+    except Exception as _e:
+        logger.warning(f"ตรวจแจ้งเตือนราคาไม่สำเร็จ: {_e}")
 
     # 📓 บันทึกการเทรด + สถิติความแม่นยำของ Verdict
     _journal = update_journal_results(_load_journal(), locals().get("df_ema_full"), selected_tf)

@@ -286,6 +286,11 @@ class NotificationService:
         logger.info("🔔 กำลังส่งการแจ้งเตือน Live EMA Cross...")
         return self.notifier.send(signal_message)
 
+    def send_price_alert(self, alert_message: str) -> bool:
+        """ส่งการแจ้งเตือนราคาที่ผู้ใช้ตั้งไว้ (แตะราคาเป้าหมาย)"""
+        logger.info("🔔 กำลังส่งการแจ้งเตือนราคาเป้าหมาย...")
+        return self.notifier.send(alert_message)
+
     def send_london_session_warning(self, warning_message: str) -> bool:
         """ส่งคำเตือนห้ามเทรดช่วงเริ่ม London Session ในวันที่มีข่าวสีแดง"""
         logger.info("🔕 กำลังส่งคำเตือนห้ามเทรดช่วง London Session (วันมีข่าวแดง)...")
