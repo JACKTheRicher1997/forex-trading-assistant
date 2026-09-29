@@ -304,15 +304,22 @@ def _candle_as_naive_utc(ts):
 
 
 def _fmt_duration(delta) -> str:
-    """จัดรูปแบบระยะเวลาต่อเนื่อง (เช่น '2 ชม. 5 นาที') ให้อ่านง่าย"""
+    """จัดรูปแบบระยะเวลาต่อเนื่องให้อ่านง่าย (เดือน/สัปดาห์/วัน/ชั่วโมง)"""
     total = max(0, int(delta.total_seconds()))
-    h, rem = divmod(total, 3600)
-    m = rem // 60
-    if h > 0:
-        return f"{h} ชม. {m} นาที"
-    if m > 0:
-        return f"{m} นาที"
-    return "ผ่านมาไม่ถึง 1 นาที"
+    minutes, _ = divmod(total, 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    weeks, days = divmod(days, 7)
+    months, weeks = divmod(weeks, 4)
+    parts = []
+    for label, val in (("เดือน", months), ("สัปดาห์", weeks), ("วัน", days), ("ชั่วโมง", hours)):
+        if val:
+            parts.append(f"{val} {label}")
+    if not parts:
+        if minutes:
+            return f"{minutes} นาที"
+        return "ผ่านมาไม่ถึง 1 นาที"
+    return " ".join(parts)
 
 
 def _resolve_app_tz():
