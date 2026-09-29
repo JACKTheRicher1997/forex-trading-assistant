@@ -1021,10 +1021,39 @@ def _volatility_html(atr_now: float, atr_base: Optional[float], v: dict) -> str:
 
 
 _TRADING_SESSIONS = [
-    {"name": "🌏 เอเชีย (Tokyo)", "start": 7 * 60, "end": 16 * 60, "color": "#38bdf8"},
-    {"name": "🇬🇧 ลอนดอน (London)", "start": 14 * 60, "end": 23 * 60, "color": "#a78bfa"},
-    {"name": "🗽 นิวยอร์ก (New York)", "start": 19 * 60 + 30, "end": 4 * 60, "color": "#fbbf24"},
+    {"name": "🌏 เอเชีย (Tokyo)", "short": "เอเชีย", "start": 7 * 60, "end": 16 * 60, "color": "#38bdf8"},
+    {"name": "🇬🇧 ลอนดอน (London)", "short": "ลอนดอน", "start": 14 * 60, "end": 23 * 60, "color": "#a78bfa"},
+    {"name": "🗽 นิวยอร์ก (New York)", "short": "นิวยอร์ก", "start": 19 * 60 + 30, "end": 4 * 60, "color": "#fbbf24"},
 ]
+
+
+def _session_intervals(start: int, end: int) -> list:
+    """แปลงช่วงเวลาเซสชันเป็นช่วง [ต้น, ปลาย) ในกรอบ 0–1440 นาที (เซสชันข้ามคืนแยกเป็น 2 ช่วง)"""
+    if end <= start:
+        return [(start, 1440), (0, end)]
+    return [(start, end)]
+
+
+def compute_session_overlaps(sessions: list) -> list:
+    """หาช่วงเวลาที่ตลาด 2 เซสชันเปิดทับกัน (Overlap) = ช่วงที่ปริมาณหนาแน่นสูงสุด"""
+    intervals = {s["name"]: _session_intervals(s["start"], s["end"]) for s in sessions}
+    overlaps = []
+    for i in range(len(sessions)):
+        for j in range(i + 1, len(sessions)):
+            a, b = sessions[i], sessions[j]
+            for a1, a2 in intervals[a["name"]]:
+                for b1, b2 in intervals[b["name"]]:
+                    lo, hi = max(a1, b1), min(a2, b2)
+                    if hi > lo:
+                        overlaps.append({
+                            "label": f"{a['short']} × {b['short']}",
+                            "start": lo,
+                            "end": hi,
+                            "minutes": hi - lo,
+                            "color": b["color"],
+                        })
+    overlaps.sort(key=lambda x: x["start"])
+    return overlaps
 
 
 def compute_trading_sessions(now=None) -> dict:
@@ -1078,7 +1107,7 @@ def compute_trading_sessions(now=None) -> dict:
                 "secs_to_open": secs_to_open,
             }
         )
-    return {"sessions": sessions, "now": now, "is_weekend": is_weekend}
+    return {"sessions": sessions, "now": now, "is_weekend": is_weekend, "overlaps": compute_session_overlaps(sessions)}
 
 
 def _fmt_hhmm_countdown(seconds: float) -> str:
@@ -1151,13 +1180,62 @@ def _sessions_html(info: dict) -> str:
             f'🚫 วันหยุดสุดสัปดาห์ — ตลาดปิด จะกลับมาเปิดวันจันทร์ช่วงเช้า</div>'
         )
 
+    overlap_rows = ""
+    overlaps = info.get("overlaps") or []
+    if overlaps:
+        seg_html = ""
+        for o in overlaps:
+            seg_html += (
+                f'<div style="position:absolute;left:{o["start"] / 1440 * 100:.2f}%;'
+                f'width:{o["minutes"] / 1440 * 100:.2f}%;height:100%;'
+                f'background:linear-gradient(90deg,#a78bfa,#fbbf24);border-radius:5px;"></div>'
+            )
+        seg_html += (
+            f'<div style="position:absolute;left:{pos:.2f}%;top:-4px;width:2px;height:18px;'
+            f'background:#f8fafc;box-shadow:0 0 5px rgba(248,250,252,0.8);"></div>'
+        )
+        detail = []
+        active_ov = None
+        next_ov = None
+        for o in overlaps:
+            if o["start"] <= now_m < o["end"]:
+                active_ov = o
+                detail.append(
+                    f'<span style="color:#fcd34d;font-weight:700;">● {o["label"]} '
+                    f'{_hhmm(o["start"])}–{_hhmm(o["end"])} กำลังอยู่ · '
+                    f'เหลือ {_fmt_hhmm_countdown((o["end"] - now_m) * 60)}</span>'
+                )
+            else:
+                secs_to = ((o["start"] - now_m) % 1440) * 60
+                if next_ov is None or secs_to < next_ov[0]:
+                    next_ov = (secs_to, o)
+                detail.append(
+                    f'<span style="color:#94a3b8;">○ {o["label"]} '
+                    f'{_hhmm(o["start"])}–{_hhmm(o["end"])} เริ่มใน {_fmt_hhmm_countdown(secs_to)}</span>'
+                )
+        if not active_ov and next_ov is not None:
+            detail.append(
+                f'<span style="color:#fcd34d;font-weight:700;">🔜 '
+                f'Overlap ถัดไป {next_ov[1]["label"]} เริ่มใน {_fmt_hhmm_countdown(next_ov[0])}</span>'
+            )
+        overlap_rows = (
+            f'<div style="margin:12px 0 4px 0;">'
+            f'<div style="font-size:0.9rem;color:#cbd5e1;margin-bottom:4px;">'
+            f'🔥 <b>Overlap</b> (ตลาดเปิดทับกัน 2 แห่ง — ปริมาณหนาแน่นสูงสุด)</div>'
+            f'<div style="position:relative;height:10px;background:rgba(255,255,255,0.08);'
+            f'border-radius:5px;overflow:hidden;">{seg_html}</div>'
+            f'<div style="display:flex;flex-direction:column;gap:2px;margin-top:6px;'
+            f'font-size:0.85rem;">{"".join(detail)}</div>'
+            f'</div>'
+        )
+
     return (
         f'<div style="background:rgba(15,23,42,0.9);border:1px solid rgba(255,255,255,0.08);'
         f'border-radius:14px;padding:16px 20px;margin:12px 0 6px 0;">'
         f'<div style="font-size:1.15rem;font-weight:800;color:#f8fafc;margin-bottom:4px;">'
         f'🕐 ช่วงเวลาเทรดที่ดีที่สุด (Trading Sessions) · '
         f'<span style="color:#fbbf24;">{info["now"].strftime("%H:%M น.")}</span></div>'
-        f'{banner}{rows}'
+        f'{banner}{rows}{overlap_rows}'
         f'<div style="margin-top:12px;padding:10px 14px;border-left:3px solid #fbbf24;'
         f'background:rgba(251,191,36,0.1);border-radius:6px;color:#fde68a;font-size:0.93rem;">'
         f'🥇 <b>ช่วงทองคำ (XAUUSD) เคลื่อนไหวแรงที่สุด:</b> 19:00–23:30 น. (เวลาไทย) '
