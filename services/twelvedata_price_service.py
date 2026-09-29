@@ -54,6 +54,7 @@ SYMBOL_MAP = {
     "ETHUSD": "ETH/USD",
     "ETHUSDm": "ETH/USD",
     "ETHUSDM": "ETH/USD",
+    "DXY": "DXY",          # US Dollar Index
 }
 
 # Timeframe Mapping: แปลง Timeframe MT5 เป็น TwelveData Interval

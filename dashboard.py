@@ -1140,6 +1140,177 @@ def _volatility_html(atr_now: float, atr_base: Optional[float], v: dict) -> str:
     )
 
 
+# ==========================================
+# DXY (US Dollar Index) - ตัวขับเคลื่อนทองคำ/คู่เงินฝั่ง USD
+# ==========================================
+def _ema_last(values: list, period: int) -> float:
+    """คำนวณค่า EMA ล่าสุดแบบ ewm(adjust=False) เพื่อความเร็วและไม่ต้องพึ่ง pandas"""
+    if not values or period <= 0:
+        return 0.0
+    k = 2.0 / (period + 1.0)
+    ema = float(values[0])
+    for v in values[1:]:
+        ema = float(v) * k + ema * (1.0 - k)
+    return ema
+
+
+def _closes_by_time(df) -> dict:
+    """แปลง DataFrame แท่งเทียนเป็น dict {time: close}"""
+    out = {}
+    if df is None:
+        return out
+    try:
+        for t, c in zip(df["time"].tolist(), df["close"].tolist()):
+            try:
+                out[t] = float(c)
+            except Exception:
+                continue
+    except Exception:
+        return {}
+    return out
+
+
+def _returns_correlation(series_a: dict, series_b: dict, lookback: int = 120):
+    """หาค่าสหสัมพันธ์ของ % การเปลี่ยนแปลงระหว่างสองสินทรัพย์ (ยิ่งติดลบ = เคลื่อนที่ตรงข้าม)"""
+    keys = sorted(set(series_a.keys()) & set(series_b.keys()))[-lookback:]
+    if len(keys) < 20:
+        return None
+    ra, rb = [], []
+    for i in range(1, len(keys)):
+        p0, p1 = keys[i - 1], keys[i]
+        if series_a.get(p0) and series_b.get(p0):
+            ra.append(series_a[p1] / series_a[p0] - 1.0)
+            rb.append(series_b[p1] / series_b[p0] - 1.0)
+    if len(ra) < 10:
+        return None
+    n = len(ra)
+    ma, mb = sum(ra) / n, sum(rb) / n
+    cov = sum((x - ma) * (y - mb) for x, y in zip(ra, rb))
+    va = sum((x - ma) ** 2 for x in ra)
+    vb = sum((y - mb) ** 2 for y in rb)
+    if va <= 0 or vb <= 0:
+        return None
+    return cov / ((va * vb) ** 0.5)
+
+
+def compute_dxy_view(gold_df=None, timeframe_str: str = "H1", symbol: str = "XAUUSD") -> dict:
+    """
+    อ่านแนวโน้มดอลลาร์ (DXY) และสรุปผลกระทบต่อสินทรัพย์ที่เลือก
+    - ดอลลาร์แข็ง (DXY ขึ้น) -> กดดันทองคำและคู่เงินฝั่ง USD
+    - ดอลลาร์อ่อน (DXY ลง) -> หนุนทองคำและคู่เงินฝั่ง USD
+    """
+    try:
+        df = cached_rates("DXY", timeframe_str, 300)
+    except Exception as e:
+        logger.warning(f"ดึงข้อมูล DXY ไม่สำเร็จ: {e}")
+        return {}
+    if df is None or len(df) < 60:
+        return {}
+
+    try:
+        closes = [float(c) for c in df["close"].tolist()]
+    except Exception:
+        return {}
+    if len(closes) < 60:
+        return {}
+
+    last, prev = closes[-1], closes[-2]
+    change_pct = ((last - prev) / prev * 100.0) if prev else 0.0
+
+    fast = int(indicator_service.fast_period or 50)
+    slow = int(indicator_service.slow_period or 150)
+    if len(closes) < slow + 2:
+        fast, slow = 20, 50
+    ema_fast = _ema_last(closes, fast)
+    ema_slow = _ema_last(closes, slow)
+    gap_pct = ((ema_fast - ema_slow) / ema_slow * 100.0) if ema_slow else 0.0
+
+    if last > ema_fast and ema_fast > ema_slow:
+        trend, color, icon = "ดอลลาร์แข็ง (ขาขึ้น)", "#ef4444", "🔺"
+    elif last < ema_fast and ema_fast < ema_slow:
+        trend, color, icon = "ดอลลาร์อ่อน (ขาลง)", "#10b981", "🔻"
+    else:
+        trend, color, icon = "ดอลลาร์ทรงตัว (Sideway)", "#f59e0b", "➡️"
+
+    is_gold = "XAU" in str(symbol).upper()
+    if trend.startswith("ดอลลาร์แข็ง"):
+        impact = (
+            "⚠️ แรงกดดันทองคำ — ระวังการไล่ราคาลง ควรรอสัญญาณยืนยันเพิ่ม"
+            if is_gold
+            else "⚠️ แรงกดดันสกุลเงินฝั่ง USD ในคู่นี้"
+        )
+    elif trend.startswith("ดอลลาร์อ่อน"):
+        impact = (
+            "✅ หนุนทองคำ — มองหาจังหวะขึ้นตามดอลลาร์อ่อน"
+            if is_gold
+            else "✅ หนุนสกุลเงินฝั่ง USD ในคู่นี้"
+        )
+    else:
+        impact = "➖ ดอลลาร์ยังไม่ชี้ทาง — รอสัญญาณจากกราฟทองคำหลักเป็นหลัก"
+
+    corr = None
+    try:
+        gold_map = _closes_by_time(gold_df)
+        if gold_map:
+            corr = _returns_correlation(gold_map, _closes_by_time(df), 120)
+    except Exception:
+        corr = None
+
+    return {
+        "price": last,
+        "change_pct": change_pct,
+        "ema_fast": ema_fast,
+        "ema_slow": ema_slow,
+        "gap_pct": gap_pct,
+        "trend": trend,
+        "color": color,
+        "icon": icon,
+        "impact": impact,
+        "corr": corr,
+        "timeframe": timeframe_str,
+        "fast": fast,
+        "slow": slow,
+    }
+
+
+def _dxy_panel_html(d: dict) -> str:
+    """สร้างแผง DXY + ผลกระทบต่อทองคำ"""
+    if not d or not d.get("price"):
+        return ""
+    chg = d["change_pct"]
+    chg_color = "#10b981" if chg >= 0 else "#ef4444"
+    chg_txt = f'{chg:+.2f}%'
+    corr = d.get("corr")
+    if corr is None:
+        corr_txt = "ข้อมูลไม่พอคำนวณ"
+        corr_color = "#94a3b8"
+    else:
+        corr_txt = f"{corr:+.2f}"
+        corr_color = "#ef4444" if corr < -0.3 else ("#10b981" if corr > 0.3 else "#f59e0b")
+        if corr < -0.3:
+            corr_txt += " (ตรงข้ามแรง ✅)"
+        elif corr > 0.3:
+            corr_txt += " (เคลื่อนที่พร้อมกัน)"
+        else:
+            corr_txt += " (ไม่ชัดเจน)"
+    return (
+        f'<div style="background:rgba(15,23,42,0.9);border:1px solid {d["color"]};'
+        f'border-radius:14px;padding:16px 20px;margin:12px 0 6px 0;">'
+        f'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">'
+        f'<span style="font-size:1.15rem;font-weight:800;color:#f8fafc;">💵 ดอลลาร์ (DXY) — ตัวขับเคลื่อนทองคำ</span>'
+        f'<span style="font-size:1.05rem;font-weight:800;color:{d["color"]};">{d["icon"]} {d["trend"]}</span>'
+        f'</div>'
+        f'<div style="display:flex;flex-wrap:wrap;gap:18px;margin-top:10px;">'
+        f'<span style="color:#cbd5e1;font-size:0.95rem;">ค่าดัชนี: <b style="color:#f8fafc;">{d["price"]:,.3f}</b></span>'
+        f'<span style="color:{chg_color};font-size:0.95rem;">แท่งล่าสุด: <b>{chg_txt}</b></span>'
+        f'<span style="color:#cbd5e1;font-size:0.95rem;">EMA{d["fast"]}/EMA{d["slow"]}: <b>{d["gap_pct"]:+.2f}%</b></span>'
+        f'<span style="color:#cbd5e1;font-size:0.95rem;">สหสัมพันธ์กับ {d["timeframe"]}: <b style="color:{corr_color};">{corr_txt}</b></span>'
+        f'</div>'
+        f'<div style="margin-top:10px;color:#e2e8f0;font-size:0.95rem;">{d["impact"]}</div>'
+        f'</div>'
+    )
+
+
 # Trading Sessions: นิยามเวลา "ตามเขตเวลาตลาด" ของแต่ละตลาด (ระบบแปลงเป็นเวลาไทยให้อัตโนมัติ
 # ตาม DST ของแต่ละประเทศ เช่น ลอนดอนเป็น BST (UTC+1) ช่วง มี.ค.–ต.ค. และ GMT (UTC+0) ช่วง พ.ย.–ก.พ.
 _TRADING_SESSIONS = [
@@ -2087,6 +2258,16 @@ if "mtf_results" in locals():
         _atr_base = locals().get("atr_base_value") if "atr_base_value" in locals() else None
         _vol = compute_volatility(_atrv, _atr_base)
         st.markdown(_volatility_html(_atrv, _atr_base, _vol), unsafe_allow_html=True)
+
+    # 💵 แผงดอลลาร์ (DXY) — ตัวขับเคลื่อนทองคำ/คู่เงินฝั่ง USD
+    try:
+        _dxy = compute_dxy_view(
+            gold_df=locals().get("df_ema_full"), timeframe_str=selected_tf, symbol=selected_symbol
+        )
+        if _dxy:
+            st.markdown(_dxy_panel_html(_dxy), unsafe_allow_html=True)
+    except Exception as _e:
+        logger.warning(f"แผง DXY แสดงไม่ได้: {_e}")
 
     # 🕐 ช่วงเวลาเทรด (Trading Sessions) — แสดงเสมอ
     _sess_info = compute_trading_sessions()

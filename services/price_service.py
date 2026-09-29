@@ -60,6 +60,7 @@ SYMBOL_MAP = {
     "NZDUSDm": "NZDUSD=X",
     "USDCAD": "USDCAD=X",
     "USDCADm": "USDCAD=X",
+    "DXY": "DX-Y.NYB",     # US Dollar Index (ICE)
 }
 
 # Timeframe Mapping: แปลง Timeframe เป็น yfinance Interval
