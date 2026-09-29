@@ -264,7 +264,7 @@ def seconds_to_next_candle(tf: str) -> int:
     เผื่อเวลา +5 วินาทีให้ Yahoo Finance อัปเดตแท่งใหม่แล้วค่อย rerun
     """
     now = datetime.datetime.now()
-    tf_sec = {"M5": 300, "M15": 900, "H1": 3600}.get(tf)
+    tf_sec = {"M5": 300, "M15": 900, "M30": 1800, "H1": 3600}.get(tf)
     if tf == "D1":
         nxt = (now + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
         return max(15, int((nxt - now).total_seconds()) + 5)
@@ -597,11 +597,11 @@ def compute_trade_verdict(
     - ข่าวแดงที่กำลังจะออก (< 30 นาที) -> บังคับ NO TRADE
     :return: dict สำหรับ render แผง verdict
     """
-    weights = {"M5": 1, "M15": 2, "H1": 3, "H4": 4, "D1": 5}
+    weights = {"M5": 1, "M15": 2, "M30": 3, "H1": 4, "H4": 5, "D1": 6}
     score, total_w = 0, 0
     bull_frames, bear_frames, neutral_frames = [], [], []
     per_tf = {}
-    for tf in ("M5", "M15", "H1", "H4", "D1"):
+    for tf in ("M5", "M15", "M30", "H1", "H4", "D1"):
         trend_str, _color = mtf_results.get(tf, ("NEUTRAL", "#94a3b8"))
         w = weights.get(tf, 1)
         if trend_str.startswith("BULLISH"):
@@ -1321,7 +1321,7 @@ with st.sidebar:
     )
 
     # แปลงชื่อเล่นไทม์เฟรมให้ตรงกับตัวเลือกในแอปของคุณ
-    tf_options = ["M5", "M15", "H1", "H4", "D1"]
+    tf_options = ["M5", "M15", "M30", "H1", "H4", "D1"]
     try:
         tf_index = tf_options.index(default_tf)
     except ValueError:
@@ -1577,8 +1577,8 @@ if signal_result:
 
         # สรุปเทรน Multi-Timeframe (MTF) ภายในคอลัมน์ซ้าย
         st.markdown("#### 🧭 สรุปเทรน Multi-Timeframe (MTF)")
-        # จัดเป็น 2 แถว (แถวบน 3 ไทม์เฟรม, แถวล่าง 2 ไทม์เฟรม) เพื่อไม่ให้มีพื้นที่ว่างด้านล่าง
-        mtf_rows = [["M5", "M15", "H1"], ["H4", "D1"]]
+        # จัดเป็น 2 แถว (แถวละ 3 ไทม์เฟรม) เพื่อให้สมดุลและไม่ให้มีพื้นที่ว่างด้านล่าง
+        mtf_rows = [["M5", "M15", "M30"], ["H1", "H4", "D1"]]
 
         # โหลดราคา + วิเคราะห์เทรนทุกไทม์เฟรมแบบขนาน (ThreadPool) 
         # แทนการวนลูป fetch ทีละตัว เพื่อลดเวลาหน้าแรกค้าง (5 เฟรม → เหลือ ~เท่าเฟรมเดียว)
@@ -1598,7 +1598,7 @@ if signal_result:
             return tf, trend, color
 
         mtf_results = {}
-        with ThreadPoolExecutor(max_workers=min(len(mtf_tfs), 5)) as _pool:
+        with ThreadPoolExecutor(max_workers=min(len(mtf_tfs), 6)) as _pool:
             for _tf, _trend, _col in _pool.map(_mtf_analyze_one, mtf_tfs):
                 mtf_results[_tf] = (_trend, _col)
 
