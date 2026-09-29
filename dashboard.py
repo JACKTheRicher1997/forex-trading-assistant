@@ -392,6 +392,10 @@ def _last_cross_from_state(symbol: str, timeframe: str):
                 break
     if not isinstance(record, dict):
         return None
+    # ลำดับการอ่าน: last_cross (เข็มถาวรที่ bot สะสมไว้ทุกไทม์เฟรม) -> alerted[-1] (24 ชม. ล่าสุด)
+    last_cross = record.get("last_cross")
+    if isinstance(last_cross, dict) and last_cross.get("candle_time"):
+        return last_cross
     alerted = record.get("alerted")
     if isinstance(alerted, list) and alerted:
         last = alerted[-1]

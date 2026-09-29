@@ -359,6 +359,28 @@ class IndicatorService:
         record = state_entries.get(state_key)
         alerted_set = self._parse_alerted_set(record)
 
+        # ----------------------------------------------------------
+        # บันทึก EMA Cross "ครั้งล่าสุด" แบบถาวร (เข็มนาฬิกาไว้บอกเวลาที่เคยเกิด Cross)
+        # ต่างจากรายการ `alerted` ที่ prune เหลือแค่ 24 ชม. — อันนี้เก็บไว้ตลอด
+        # เพื่อให้หน้า Dashboard ย้อนบอกเวลาครั้งล่าสุดได้ทุกไทม์เฟรม (M5/M15/H1/H4/D1)
+        # ----------------------------------------------------------
+        _last_idx, _last_sig = crosses[-1]
+        _last_cross_time = _to_aware_utc(df_calc.iloc[_last_idx]["time"])
+        _old_last_cross = record.get("last_cross") if isinstance(record, dict) else None
+        _last_cross_changed = False
+        new_last_cross = None
+        if _old_last_cross is None:
+            _last_cross_changed = True
+            new_last_cross = {"candle_time": _last_cross_time.isoformat(), "signal": _last_sig.value}
+        else:
+            try:
+                _old_last_time = _to_aware_utc(_old_last_cross["candle_time"])
+            except Exception:
+                _old_last_time = None
+            if _old_last_time is None or _last_cross_time > _old_last_time:
+                _last_cross_changed = True
+                new_last_cross = {"candle_time": _last_cross_time.isoformat(), "signal": _last_sig.value}
+
         now_utc = datetime.datetime.now(datetime.timezone.utc)
         twenty4h_ago = now_utc - datetime.timedelta(hours=24)
 
@@ -399,6 +421,14 @@ class IndicatorService:
             ))
 
         if not candidates:
+            # ไม่พบ Cross ใหม่ในช่วง 24 ชม. แต่ถ้าประวัติ Cross ล่าสุดในข้อมูลใหม่กว่า
+            # ที่บันทึกไว้ ก็ยังต้องอัปเดต last_cross (บอกเวลาครั้งล่าสุดที่เกิด)
+            if _last_cross_changed:
+                _merged = dict(record) if isinstance(record, dict) else {}
+                _merged.pop("last_cross", None)  # จะเขียนทับใหม่ด้านล่าง
+                _merged["last_cross"] = new_last_cross
+                _merged["updated_at"] = now_utc.isoformat()
+                _save_cross_state({state_key: _merged})
             return []
 
         # บันทึก Cross ที่พบทั้งหมดลง state (เลื่อน anchor ข้ามช่วงที่ bot หยุด)
@@ -416,6 +446,7 @@ class IndicatorService:
         _save_cross_state({
             state_key: {
                 "alerted": merged,
+                "last_cross": new_last_cross if _last_cross_changed else _old_last_cross,
                 "updated_at": now_utc.isoformat(),
             }
         })
