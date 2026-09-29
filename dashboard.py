@@ -980,37 +980,60 @@ def compute_position_size(
     }
 
 
-def _plan_sl_tp_html(direction: str, price: float, atr: float, sr: dict, size: dict = None) -> str:
+def compute_trade_plan(direction: str, price: float, atr: float, sr: dict) -> dict:
     """
-    สร้างแผน SL/TP อัตโนมัติจาก ATR (และแนวรับ/ต้านใกล้สุดเป็นตัวช่วย)
-    ค่าเริ่มต้น: SL = 1.5xATR, TP1 = 1.5xATR (R:R 1:1), TP2 = 3xATR (R:R 1:2)
-    ถ้าแนวต้าน/รับใกล้สุดอยู่ใกล้กว่า TP -> ใช้แนวนั้นเป็นเป้าแรก (สมจริงกว่า)
+    คำนวณแผน SL/TP อัตโนมัติจาก ATR (ใช้ร่วมกันทั้งการแสดงผลและบันทึกการเทรด)
+    - SL = 1.5xATR, TP1 = 1.5xATR, TP2 = 3.0xATR
+    - ถ้าแนวรับ/ต้านใกล้สุดอยู่ใกล้กว่า TP1 -> ใช้แนวนั้นเป็นเป้าหมายแรก
     """
     is_buy = direction == "BUY"
     vm = 1 if is_buy else -1
-
     sl_price = price - vm * 1.5 * atr
     tp1_price = price + vm * 1.5 * atr
     tp2_price = price + vm * 3.0 * atr
 
-    # รวมแนวรับ/ต้านใกล้สุดเข้ากับเป้าแรก
     ref_note = ""
     if is_buy and sr.get("nearest_resistance"):
         nr = sr["nearest_resistance"]
         if nr["price"] < tp1_price:
             tp1_price = nr["price"]
-            ref_note = f"TP1 ปรับให้ตรงแนวต้านใกล้สุด {nr['label']} ${nr['price']:,.2f}"
+            ref_note = f'TP1 ปรับให้ตรงแนวต้านใกล้สุด {nr["label"]} ${nr["price"]:,.2f}'
     if not is_buy and sr.get("nearest_support"):
         ns = sr["nearest_support"]
         if ns["price"] > tp1_price:
             tp1_price = ns["price"]
-            ref_note = f"TP1 ปรับให้ตรงแนวรับใกล้สุด {ns['label']} ${ns['price']:,.2f}"
+            ref_note = f'TP1 ปรับให้ตรงแนวรับใกล้สุด {ns["label"]} ${ns["price"]:,.2f}'
 
     sl_dist = abs(price - sl_price)
     tp1_dist = abs(tp1_price - price)
     tp2_dist = abs(tp2_price - price)
-    rr1 = tp1_dist / sl_dist if sl_dist else 0
-    rr2 = tp2_dist / sl_dist if sl_dist else 0
+    return {
+        "direction": direction,
+        "is_buy": is_buy,
+        "entry": price,
+        "sl": sl_price,
+        "tp1": tp1_price,
+        "tp2": tp2_price,
+        "sl_dist": sl_dist,
+        "tp1_dist": tp1_dist,
+        "tp2_dist": tp2_dist,
+        "rr1": (tp1_dist / sl_dist) if sl_dist else 0.0,
+        "rr2": (tp2_dist / sl_dist) if sl_dist else 0.0,
+        "ref_note": ref_note,
+        "atr": atr,
+    }
+
+
+def _plan_sl_tp_html(direction: str, price: float, atr: float, sr: dict, size: dict = None) -> str:
+    """
+    สร้างแผน SL/TP อัตโนมัติจาก ATR (และแนวรับ/แนวต้านใกล้สุดเป็นตัวช่วย)
+    ค่าเริ่มต้น: SL = 1.5xATR, TP1 = 1.5xATR (R:R 1:1), TP2 = 3xATR (R:R 1:2)
+    """
+    plan = compute_trade_plan(direction, price, atr, sr)
+    is_buy = plan["is_buy"]
+    sl_price, tp1_price, tp2_price = plan["sl"], plan["tp1"], plan["tp2"]
+    sl_dist, tp1_dist, tp2_dist = plan["sl_dist"], plan["tp1_dist"], plan["tp2_dist"]
+    rr1, rr2, ref_note = plan["rr1"], plan["rr2"], plan["ref_note"]
 
     def box(label, val, color, sub=""):
         return (
@@ -1136,6 +1159,321 @@ def _volatility_html(atr_now: float, atr_base: Optional[float], v: dict) -> str:
         f'<div style="display:flex;justify-content:space-between;color:#64748b;font-size:0.75rem;">'
         f'<span>0.5x</span><span>1x (ปกติ)</span><span>1.5x</span><span>2x</span></div>'
         f'<div style="margin-top:10px;color:#e2e8f0;font-size:0.95rem;">💡 {v["msg"]}</div>'
+        f'</div>'
+    )
+
+
+# ==========================================
+# บันทึกการเทรด (Trade Journal) + สถิติความแม่นยำของ Verdict
+# ==========================================
+_JOURNAL_FILE = Path(__file__).resolve().parent / "state" / "trade_journal.json"
+_JOURNAL_MAX_ENTRIES = 200
+_JOURNAL_MAX_BARS = 120  # รอประมาณกี่แท่งถึงจะตัดสินผล (M5 -> ~10 ชั่วโมง)
+
+
+def _load_journal() -> list:
+    """โหลดบันทึกสัญญาณทั้งหมด"""
+    try:
+        if _JOURNAL_FILE.exists():
+            with open(_JOURNAL_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            items = data.get("signals", [])
+            if isinstance(items, list):
+                return items
+    except Exception as e:
+        logger.warning(f"อ่านไฟล์บันทึกการเทรดไม่ได้: {e}")
+    return []
+
+
+def _save_journal(items: list) -> None:
+    """บันทึกบันทึกการเทรด (จำกัดจำนวนรายการไม่ให้ไฟล์บวม)"""
+    try:
+        _JOURNAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(_JOURNAL_FILE, "w", encoding="utf-8") as f:
+            json.dump(
+                {"version": 1, "signals": items[-_JOURNAL_MAX_ENTRIES:]},
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+    except Exception as e:
+        logger.error(f"บันทึกไฟล์บันทึกการเทรดไม่สำเร็จ: {e}")
+
+
+def _epoch(ts):
+    """แปลง timestamp เป็นเลขวินาที (รองรับ datetime และ pandas Timestamp)"""
+    try:
+        return float(ts.timestamp())
+    except Exception:
+        return None
+
+
+def record_verdict_signal(
+    verdict: dict,
+    symbol: str,
+    timeframe_str: str,
+    entry: float,
+    sl: float,
+    tp1: float,
+    tp2: float,
+    df=None,
+) -> Optional[dict]:
+    """
+    บันทึกสัญญาณ BUY/SELL ลงไฟล์ (ข้ามหากมีสัญญาณเดิมของแท่งเดียวกันอยู่แล้ว)
+    ใช้ประเมินย้อนหลังว่า TP1 หรือ SL ถูกแตะก่อน เพื่อคำนวณความแม่นยำ
+    """
+    if not verdict or verdict.get("verdict") not in ("BUY", "SELL"):
+        return None
+    try:
+        candle_time = None
+        if df is not None and len(df) > 0:
+            candle_time = df["time"].iloc[-1]
+        if candle_time is None:
+            candle_time = datetime.datetime.now(datetime.timezone.utc)
+        ts_val = _epoch(candle_time)
+        if ts_val is None:
+            return None
+
+        sig_id = f"{int(ts_val)}_{symbol}_{timeframe_str}_{verdict['verdict']}"
+        items = _load_journal()
+        for it in items:
+            if it.get("id") == sig_id:
+                return None  # บันทึกแท่งนี้ไปแล้ว
+
+        items.append(
+            {
+                "id": sig_id,
+                "created_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "candle_time": str(candle_time),
+                "symbol": symbol,
+                "timeframe": timeframe_str,
+                "verdict": verdict["verdict"],
+                "confidence": verdict.get("confidence", 0),
+                "entry": float(entry),
+                "sl": float(sl),
+                "tp1": float(tp1),
+                "tp2": float(tp2),
+                "status": "OPEN",
+                "result_pct": None,
+                "closed_candle": None,
+            }
+        )
+        _save_journal(items)
+        return items[-1]
+    except Exception as e:
+        logger.error(f"บันทึกสัญญาณลงบันทึกการเทรดไม่สำเร็จ: {e}")
+        return None
+
+
+def update_journal_results(items: list, df, timeframe_str: str) -> list:
+    """
+    ตรวจสัญญาณที่ยัง OPEN ด้วยแท่งเทียนราคาล่าสุด
+    - แตะ SL ก่อน -> LOSS (ถือว่าแย่สุดเมื่อแท่งเดียวแตะทั้งสองฝั่ง)
+    - แตะ TP1 -> WIN
+    - เกินจำนวนแท่งที่รอไว้ -> TIME (ยังไม่ถึงเป้า ไม่นับเข้าความแม่นยำ)
+    """
+    if not items or df is None or len(df) == 0:
+        return items
+    try:
+        times = df["time"].tolist()
+        highs = [float(x) for x in df["high"].tolist()]
+        lows = [float(x) for x in df["low"].tolist()]
+    except Exception as e:
+        logger.warning(f"อัปเดตผลบันทึกการเทรดไม่ได้: {e}")
+        return items
+
+    bars = [(t, h, l) for t, h, l in zip(times, highs, lows) if _epoch(t) is not None]
+    changed = False
+    for it in items:
+        if it.get("status") != "OPEN" or it.get("timeframe") != timeframe_str:
+            continue
+        sig_ts = None
+        try:
+            sig_ts = _epoch(
+                datetime.datetime.fromisoformat(it["candle_time"])
+                if "candle_time" in it
+                else datetime.datetime.fromisoformat(it["created_utc"])
+            )
+        except Exception:
+            sig_ts = _epoch(datetime.datetime.fromisoformat(it["created_utc"]))
+        if sig_ts is None:
+            continue
+
+        # เฉพาะแท่งที่เกิดหลังสัญญาณ (แท่งปัจจุบันอาจยังไม่ปิด -> ข้ามไปก่อน)
+        future = [b for b in bars if _epoch(b[0]) > sig_ts][:_JOURNAL_MAX_BARS]
+        if not future:
+            continue
+
+        is_buy = it.get("verdict") == "BUY"
+        sl, tp1 = float(it.get("sl", 0)), float(it.get("tp1", 0))
+        entry = float(it.get("entry", 0)) or 0.0
+        status, pct = "OPEN", None
+        for t, h, l in future:
+            hit_sl = (l <= sl) if is_buy else (h >= sl)
+            hit_tp = (h >= tp1) if is_buy else (l <= tp1)
+            if hit_sl:
+                status = "LOSS"
+                # BUY: ราคาลงจากราคาเข้า = ขาดทุน / SELL: ราคาขึ้น = ขาดทุน
+                pct = (
+                    ((sl - entry) if is_buy else (entry - sl)) / entry * 100.0
+                ) if entry else 0.0
+                break
+            if hit_tp:
+                status = "WIN"
+                pct = (
+                    ((tp1 - entry) if is_buy else (entry - tp1)) / entry * 100.0
+                ) if entry else 0.0
+                break
+        if status == "OPEN" and len(future) >= _JOURNAL_MAX_BARS:
+            status = "TIME"
+
+        if status != "OPEN":
+            it["status"] = status
+            it["result_pct"] = round(pct, 2) if pct is not None else None
+            it["closed_candle"] = str(future[-1][0])
+            changed = True
+
+    if changed:
+        _save_journal(items)
+    return items
+
+
+def journal_stats(items: list) -> dict:
+    """สรุปสถิติความแม่นยำของ Verdict แยกตามกรอบเวลา"""
+    stats = {
+        "total": len(items),
+        "win": 0,
+        "loss": 0,
+        "open": 0,
+        "time": 0,
+        "accuracy": None,
+        "avg_win": None,
+        "avg_loss": None,
+        "by_tf": {},
+    }
+    for it in items:
+        st_ = it.get("status", "OPEN")
+        if st_ == "WIN":
+            stats["win"] += 1
+        elif st_ == "LOSS":
+            stats["loss"] += 1
+        elif st_ == "TIME":
+            stats["time"] += 1
+        else:
+            stats["open"] += 1
+        tf = it.get("timeframe", "?")
+        stats["by_tf"].setdefault(tf, {"win": 0, "loss": 0, "open": 0, "time": 0})
+        stats["by_tf"][tf][
+            {"WIN": "win", "LOSS": "loss", "TIME": "time"}.get(st_, "open")
+        ] += 1
+
+    done = stats["win"] + stats["loss"]
+    if done:
+        stats["accuracy"] = stats["win"] / done * 100.0
+    wins = [it["result_pct"] for it in items if it.get("status") == "WIN" and it.get("result_pct") is not None]
+    loss = [it["result_pct"] for it in items if it.get("status") == "LOSS" and it.get("result_pct") is not None]
+    if wins:
+        stats["avg_win"] = sum(wins) / len(wins)
+    if loss:
+        stats["avg_loss"] = sum(loss) / len(loss)
+    return stats
+
+
+def _journal_html(items: list, s: dict) -> str:
+    """สร้างแผงสถิติผลการเทรดย้อนหลัง"""
+    if not items:
+        return (
+            '<div style="background:rgba(15,23,42,0.9);border:1px solid #334155;border-radius:14px;'
+            'padding:16px 20px;margin:12px 0 6px 0;color:#94a3b8;font-size:0.95rem;">'
+            '📓 <b style="color:#f8fafc;">บันทึกการเทรด &amp; ความแม่นยำของ Verdict</b><br/>'
+            'ยังไม่มีสัญญาณที่บันทึกไว้ — เปิดเว็บไว้เรื่อย ๆ ระบบจะบันทึกทุกครั้งที่ Verdict '
+            'แนะนำ BUY/SELL แล้วตรวจผลกับราคาจริงให้อัตโนมัติ'
+            '</div>'
+        )
+
+    acc = s["accuracy"]
+    if acc is None:
+        acc_txt, acc_color = "รอผล", "#94a3b8"
+    else:
+        acc_txt = f'{acc:.1f}%'
+        acc_color = "#10b981" if acc >= 55 else ("#f59e0b" if acc >= 40 else "#ef4444")
+    done = s["win"] + s["loss"]
+    exp_txt = (
+        f'เฉลี่ยชนะ {s["avg_win"]:+.2f}% / เฉลี่ยแพ้ {s["avg_loss"]:+.2f}%'
+        if s.get("avg_win") is not None and s.get("avg_loss") is not None
+        else "—"
+    )
+
+    tf_rows = ""
+    for tf in sorted(s["by_tf"].keys()):
+        d = s["by_tf"][tf]
+        dn = d["win"] + d["loss"]
+        tacc = f'{d["win"] / dn * 100:.0f}%' if dn else "—"
+        tf_rows += (
+            f'<tr><td style="text-align:center;">{tf}</td>'
+            f'<td style="text-align:center;color:#10b981;">{d["win"]}</td>'
+            f'<td style="text-align:center;color:#ef4444;">{d["loss"]}</td>'
+            f'<td style="text-align:center;color:#f59e0b;">{d["time"]}</td>'
+            f'<td style="text-align:center;color:#94a3b8;">{d["open"]}</td>'
+            f'<td style="text-align:center;font-weight:700;">{tacc}</td></tr>'
+        )
+
+    recent = ""
+    for it in items[-6:][::-1]:
+        st_ = it.get("status", "OPEN")
+        icon = {"WIN": "✅", "LOSS": "❌", "TIME": "⏳"}.get(st_, "⏳")
+        color = {"WIN": "#10b981", "LOSS": "#ef4444", "TIME": "#f59e0b"}.get(st_, "#94a3b8")
+        v = it.get("verdict", "")
+        vcolor = "#10b981" if v == "BUY" else "#ef4444"
+        pct = it.get("result_pct")
+        ptxt = f'{pct:+.2f}%' if pct is not None else "—"
+        try:
+            ts_txt = datetime.datetime.fromisoformat(it["created_utc"]).astimezone(
+                _resolve_app_tz()[0]
+            ).strftime("%d/%m %H:%M")
+        except Exception:
+            ts_txt = it.get("created_utc", "")[:16]
+        recent += (
+            f'<tr><td style="text-align:center;">{ts_txt}</td>'
+            f'<td style="text-align:center;">{it.get("symbol", "")}</td>'
+            f'<td style="text-align:center;color:{vcolor};font-weight:700;">{v}</td>'
+            f'<td style="text-align:center;">{it.get("entry", 0):,.2f}</td>'
+            f'<td style="text-align:center;color:{color};font-weight:700;">{icon} {st_}</td>'
+            f'<td style="text-align:center;color:{color};">{ptxt}</td></tr>'
+        )
+
+    return (
+        f'<div style="background:rgba(15,23,42,0.9);border:1px solid #334155;border-radius:14px;'
+        f'padding:16px 20px;margin:12px 0 6px 0;">'
+        f'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">'
+        f'<span style="font-size:1.15rem;font-weight:800;color:#f8fafc;">📓 บันทึกการเทรด &amp; ความแม่นยำของ Verdict</span>'
+        f'<span style="font-size:1.05rem;font-weight:800;color:{acc_color};">ความแม่นยำ {acc_txt}</span>'
+        f'</div>'
+        f'<div style="display:flex;flex-wrap:wrap;gap:18px;margin-top:10px;font-size:0.93rem;">'
+        f'<span style="color:#cbd5e1;">สัญญาณทั้งหมด: <b>{s["total"]}</b></span>'
+        f'<span style="color:#10b981;">ชนะ: <b>{s["win"]}</b></span>'
+        f'<span style="color:#ef4444;">แพ้: <b>{s["loss"]}</b></span>'
+        f'<span style="color:#f59e0b;">หมดเวลา: <b>{s["time"]}</b></span>'
+        f'<span style="color:#94a3b8;">กำลังรอ: <b>{s["open"]}</b></span>'
+        f'</div>'
+        f'<div style="margin-top:6px;color:#94a3b8;font-size:0.85rem;">'
+        f'วิเคราะห์จาก {done} สัญญาณที่ตัดสินผลแล้ว · {exp_txt}'
+        f'</div>'
+        f'<div style="margin-top:12px;overflow-x:auto;">'
+        f'<table style="width:100%;border-collapse:collapse;font-size:0.88rem;">'
+        f'<thead><tr style="color:#94a3b8;border-bottom:1px solid #334155;">'
+        f'<th style="padding:4px;">TF</th><th style="padding:4px;">ชนะ</th><th style="padding:4px;">แพ้</th>'
+        f'<th style="padding:4px;">หมดเวลา</th><th style="padding:4px;">รอ</th><th style="padding:4px;">%</th>'
+        f'</tr></thead><tbody>{tf_rows}</tbody></table></div>'
+        f'<div style="margin-top:12px;overflow-x:auto;">'
+        f'<table style="width:100%;border-collapse:collapse;font-size:0.88rem;">'
+        f'<thead><tr style="color:#94a3b8;border-bottom:1px solid #334155;">'
+        f'<th style="padding:4px;">เวลา</th><th style="padding:4px;">Symbol</th><th style="padding:4px;">ทิศ</th>'
+        f'<th style="padding:4px;">ราคาเข้า</th><th style="padding:4px;">ผล</th><th style="padding:4px;">%</th>'
+        f'</tr></thead><tbody>{recent}</tbody></table></div>'
+        f'<div style="margin-top:8px;color:#64748b;font-size:0.78rem;">'
+        f'*ตัดสินผลจากราคาจริง: ถ้าแตะ Stop Loss ก่อน = แพ้ · ถ้าแตะ TP1 = ชนะ · '
+        f'รอครบ {_JOURNAL_MAX_BARS} แท่งยังไม่ถึงเป้า = หมดเวลา (ไม่นับเข้าความแม่นยำ)</div>'
         f'</div>'
     )
 
@@ -2229,18 +2567,29 @@ if "mtf_results" in locals():
     # 🎯 แผน SL/TP อัตโนมัติจาก ATR — แสดงเฉพาะเมื่อ Verdict แนะนำเทรดได้จริง
     _atrv = locals().get("atr_value") if "atr_value" in locals() else None
     if _atrv and verdict["verdict"] in ("BUY", "SELL") and sr_info and sr_info["current_close"]:
-        # 💰 คำนวณขนาดไม้จากพอร์ต + % ความเสี่ยง (ต้องใช้ SL เดียวกับที่แสดงในแผน)
-        _sl = sr_info["current_close"] - (
-            1 if verdict["verdict"] == "BUY" else -1
-        ) * 1.5 * _atrv
+        # 💰 คำนวณขนาดไม้จากพอร์ต + % ความเสี่ยง (ใช้แผนเดียวกับที่บันทึกลง journal)
+        _plan = compute_trade_plan(
+            verdict["verdict"], sr_info["current_close"], _atrv, sr_info
+        )
         _size = compute_position_size(
-            selected_symbol, sr_info["current_close"], _sl, account_size, risk_pct
+            selected_symbol, _plan["entry"], _plan["sl"], account_size, risk_pct
         )
         st.markdown(
             _plan_sl_tp_html(
                 verdict["verdict"], sr_info["current_close"], _atrv, sr_info, _size
             ),
             unsafe_allow_html=True,
+        )
+        # 📓 บันทึกสัญญาณนี้ (ข้ามถ้าบันทึกแท่งเดิมแล้ว) เพื่อให้ตรวจผลย้อนหลังได้
+        record_verdict_signal(
+            verdict,
+            selected_symbol,
+            selected_tf,
+            _plan["entry"],
+            _plan["sl"],
+            _plan["tp1"],
+            _plan["tp2"],
+            df=locals().get("df_ema_full"),
         )
     elif _atrv:
         # แม้ยังไม่แนะนำเทรด ก็ให้เห็นความผันผวนเพื่อวางแผนรอ
@@ -2272,6 +2621,20 @@ if "mtf_results" in locals():
     # 🕐 ช่วงเวลาเทรด (Trading Sessions) — แสดงเสมอ
     _sess_info = compute_trading_sessions()
     st.markdown(_sessions_html(_sess_info), unsafe_allow_html=True)
+
+    # 📓 บันทึกการเทรด + สถิติความแม่นยำของ Verdict
+    _journal = update_journal_results(_load_journal(), locals().get("df_ema_full"), selected_tf)
+    _jstats = journal_stats(_journal)
+    st.markdown(_journal_html(_journal, _jstats), unsafe_allow_html=True)
+    with st.expander("🗑️ จัดการบันทึกการเทรด", expanded=False):
+        st.caption(
+            f"บันทึกไว้ {_JOURNAL_MAX_ENTRIES} รายการล่าสุดใน state/trade_journal.json · "
+            f"สถิติคำนวณจากแท่งเทียนราคาจริงหลังสัญญาณ"
+        )
+        if st.button("🗑️ ล้างบันทึกการเทรดทั้งหมด", key="btn_clear_journal"):
+            _save_journal([])
+            st.success("ล้างบันทึกการเทรดเรียบร้อยแล้ว")
+            st.rerun()
 
 # แท็บแสดง 3 มุมมองตามโจทย์: สรุปรายสัปดาห์, ดูแยกตามวัน, และ ปฏิทินรายเดือน
 tab_weekly, tab_daily, tab_calendar = st.tabs(
