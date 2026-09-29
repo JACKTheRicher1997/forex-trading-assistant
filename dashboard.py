@@ -1057,14 +1057,23 @@ def compute_trading_sessions(now=None) -> dict:
             secs_end = (end - now_m) * 60 if active else None
             secs_to_open = ((start - now_m) % 1440) * 60
             end_disp = end
-        left = start / 1440 * 100
-        width = min((end_disp - start) / 1440 * 100, 100.0)
+        left = None
+        width = None
+        end_disp = end
+        segments = []
+        if wrap:
+            # เซสชันข้ามเที่ยงคืน (เช่น NY 19:30–04:00) แบ่งวาดเป็น 2 ท่อนให้อยู่ภายในเส้น 24 ชม.
+            seg1 = {"left": start / 1440 * 100, "width": max(0.0, (1440 - start) / 1440 * 100)}
+            seg2 = {"left": 0.0, "width": max(0.0, end / 1440 * 100)}
+            segments = [seg1, seg2]
+            end_disp = 0
+        else:
+            segments = [{"left": start / 1440 * 100, "width": max(0.0, (end - start) / 1440 * 100)}]
         sessions.append(
             {
                 **s,
                 "active": active,
-                "left": left,
-                "width": width,
+                "segments": segments,
                 "secs_end": secs_end,
                 "secs_to_open": secs_to_open,
             }
@@ -1113,14 +1122,22 @@ def _sessions_html(info: dict) -> str:
                 f'<span style="color:#64748b;">○ เปิดใน '
                 f'{_fmt_hhmm_countdown(s["secs_to_open"])}</span>'
             )
+        seg_html = ""
+        _opacity = "0.95" if s["active"] else "0.25"
+        for seg in s["segments"]:
+            seg_html += (
+                f'<div style="position:absolute;left:{seg["left"]:.2f}%;'
+                f'width:{seg["width"]:.2f}%;height:100%;background:{s["color"]};'
+                f'opacity:{_opacity};border-radius:5px;"></div>'
+            )
         rows += (
             f'<div style="margin:8px 0;">'
             f'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;'
             f'font-size:0.9rem;color:#cbd5e1;margin-bottom:4px;">'
             f'<span>{s["name"]} · {time_range}</span>{st_txt}</div>'
-            f'<div style="position:relative;height:10px;background:rgba(255,255,255,0.08);border-radius:5px;">'
-            f'<div style="position:absolute;left:{s["left"]:.2f}%;width:{s["width"]:.2f}%;height:100%;'
-            f'background:{s["color"]};opacity:{"0.95" if s["active"] else "0.25"};border-radius:5px;"></div>'
+            f'<div style="position:relative;height:10px;background:rgba(255,255,255,0.08);border-radius:5px;'
+            f'overflow:hidden;">'
+            f'{seg_html}'
             f'<div style="position:absolute;left:{pos:.2f}%;top:-4px;width:2px;height:18px;'
             f'background:#f8fafc;box-shadow:0 0 5px rgba(248,250,252,0.8);"></div>'
             f'</div>'
