@@ -1072,6 +1072,24 @@ def compute_trading_sessions(now=None) -> dict:
     return {"sessions": sessions, "now": now, "is_weekend": is_weekend}
 
 
+def _fmt_hhmm_countdown(seconds: float) -> str:
+    """จัดรูปแบบเวลานับถอยหลังของเซสชันให้ครบทั้งชั่วโมง+นาที (เช่น 3 ชม. 49 นาที)"""
+    total = max(0, int(seconds))
+    minutes, _ = divmod(total, 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    parts = []
+    if days:
+        parts.append(f"{days} วัน")
+    if hours:
+        parts.append(f"{hours} ชม.")
+    if minutes:
+        parts.append(f"{minutes} นาที")
+    if not parts:
+        return "อีกไม่กี่อึดใจ"
+    return " ".join(parts)
+
+
 def _hhmm(mins: int) -> str:
     mins = int(mins)
     return f"{mins // 60 % 24:02d}:{mins % 60:02d}"
@@ -1088,12 +1106,12 @@ def _sessions_html(info: dict) -> str:
         if s["active"]:
             st_txt = (
                 f'<span style="color:{s["color"]};font-weight:700;">● เปิดอยู่ · '
-                f'เหลือ {_fmt_duration(datetime.timedelta(seconds=s["secs_end"]))}</span>'
+                f'เหลือ {_fmt_hhmm_countdown(s["secs_end"])}</span>'
             )
         else:
             st_txt = (
                 f'<span style="color:#64748b;">○ เปิดใน '
-                f'{_fmt_duration(datetime.timedelta(seconds=s["secs_to_open"]))}</span>'
+                f'{_fmt_hhmm_countdown(s["secs_to_open"])}</span>'
             )
         rows += (
             f'<div style="margin:8px 0;">'
