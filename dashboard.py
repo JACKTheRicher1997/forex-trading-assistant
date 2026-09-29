@@ -1366,11 +1366,10 @@ if signal_result:
             if _lc_naive is not None:
                 _lc_dur = _fmt_duration(datetime.datetime.utcnow() - _lc_naive)
                 cross_occur = (
-                    f"ℹ️ ยังไม่พบการตัดกัน (CROSS) ในข้อมูล {_n_bars} แท่งล่าสุด "
-                    f"(ช่วงข้อมูลเริ่ม {_start_str})<br>"
+                    f"ℹ️ ในข้อมูล {_n_bars} แท่งล่าสุด (เริ่ม {_start_str}) ไม่พบการตัดกัน (CROSS) — "
+                    f"แต่ Cross ครั้งล่าสุดเป็นดังนี้<br>"
                     f"📌 <b>EMA Cross ครั้งล่าสุด:</b> {_lc_mark} เวลา "
-                    f"<b>{_fmt_ts_bangkok(_lc_naive)}</b> (ผ่านมาแล้ว {_lc_dur}) "
-                    f"— แนวโน้มนี้ต่อเนื่องมาก่อนหน้าข้อมูลที่แสดง หรือกำลังตัดกันบนแท่งที่ยังไม่ปิด"
+                    f"<b>{_fmt_ts_bangkok(_lc_naive)}</b> (ผ่านมาแล้ว {_lc_dur})"
                 )
             else:
                 cross_occur = (
