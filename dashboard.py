@@ -960,6 +960,119 @@ def _volatility_html(atr_now: float, atr_base: Optional[float], v: dict) -> str:
     )
 
 
+_TRADING_SESSIONS = [
+    {"name": "🌏 เอเชีย (Tokyo)", "start": 7 * 60, "end": 16 * 60, "color": "#38bdf8"},
+    {"name": "🇬🇧 ลอนดอน (London)", "start": 14 * 60, "end": 23 * 60, "color": "#a78bfa"},
+    {"name": "🗽 นิวยอร์ก (New York)", "start": 19 * 60 + 30, "end": 4 * 60, "color": "#fbbf24"},
+]
+
+
+def compute_trading_sessions(now=None) -> dict:
+    """
+    คำนวณสถานะช่วงเวลาเทรด (Trading Sessions) เทียบกับเวลาปัจจุบัน (ICT)
+    - เช็คว่าแต่ละเซสชันเปิดอยู่หรือไม่ + เหลือเวลานับถอยหลัง / กว่าจะเปิด
+    - เช็ควันหยุดสุดสัปดาห์ (ตลาด Forex ปิด เสาร์-อาทิตย์)
+    """
+    tz, _ = _resolve_app_tz()
+    now = now or datetime.datetime.now(tz)
+    now_m = now.hour * 60 + now.minute
+    is_weekend = now.weekday() >= 5
+
+    sessions = []
+    for s in _TRADING_SESSIONS:
+        start, end = s["start"], s["end"]
+        wrap = end <= start
+        if wrap:
+            active = now_m >= start or now_m < end
+            if active:
+                end_w = end + 1440 if now_m >= start else end
+                secs_end = (end_w - now_m) * 60
+            else:
+                secs_end = None
+            next_open = start if now_m < start else start + 1440
+            secs_to_open = (next_open - now_m) * 60
+            end_disp = end + 1440
+        else:
+            active = start <= now_m < end
+            secs_end = (end - now_m) * 60 if active else None
+            secs_to_open = ((start - now_m) % 1440) * 60
+            end_disp = end
+        left = start / 1440 * 100
+        width = min((end_disp - start) / 1440 * 100, 100.0)
+        sessions.append(
+            {
+                **s,
+                "active": active,
+                "left": left,
+                "width": width,
+                "secs_end": secs_end,
+                "secs_to_open": secs_to_open,
+            }
+        )
+    return {"sessions": sessions, "now": now, "is_weekend": is_weekend}
+
+
+def _hhmm(mins: int) -> str:
+    mins = int(mins)
+    return f"{mins // 60 % 24:02d}:{mins % 60:02d}"
+
+
+def _sessions_html(info: dict) -> str:
+    """สร้าง HTML แผงช่วงเวลาเทรด (Timeline 24 ชม. + สถานะเซสชัน)"""
+    now_m = info["now"].hour * 60 + info["now"].minute
+    pos = now_m / 1440 * 100
+
+    rows = ""
+    for s in info["sessions"]:
+        time_range = f"{_hhmm(s['start'])}–{_hhmm(s['end'])} น."
+        if s["active"]:
+            st_txt = (
+                f'<span style="color:{s["color"]};font-weight:700;">● เปิดอยู่ · '
+                f'เหลือ {_fmt_duration(datetime.timedelta(seconds=s["secs_end"]))}</span>'
+            )
+        else:
+            st_txt = (
+                f'<span style="color:#64748b;">○ เปิดใน '
+                f'{_fmt_duration(datetime.timedelta(seconds=s["secs_to_open"]))}</span>'
+            )
+        rows += (
+            f'<div style="margin:8px 0;">'
+            f'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;'
+            f'font-size:0.9rem;color:#cbd5e1;margin-bottom:4px;">'
+            f'<span>{s["name"]} · {time_range}</span>{st_txt}</div>'
+            f'<div style="position:relative;height:10px;background:rgba(255,255,255,0.08);border-radius:5px;">'
+            f'<div style="position:absolute;left:{s["left"]:.2f}%;width:{s["width"]:.2f}%;height:100%;'
+            f'background:{s["color"]};opacity:{"0.95" if s["active"] else "0.25"};border-radius:5px;"></div>'
+            f'<div style="position:absolute;left:{pos:.2f}%;top:-4px;width:2px;height:18px;'
+            f'background:#f8fafc;box-shadow:0 0 5px rgba(248,250,252,0.8);"></div>'
+            f'</div>'
+            f'</div>'
+        )
+
+    banner = ""
+    if info["is_weekend"]:
+        banner = (
+            f'<div style="margin-bottom:10px;color:#f87171;font-weight:700;">'
+            f'🚫 วันหยุดสุดสัปดาห์ — ตลาดปิด จะกลับมาเปิดวันจันทร์ช่วงเช้า</div>'
+        )
+
+    return (
+        f'<div style="background:rgba(15,23,42,0.9);border:1px solid rgba(255,255,255,0.08);'
+        f'border-radius:14px;padding:16px 20px;margin:12px 0 6px 0;">'
+        f'<div style="font-size:1.15rem;font-weight:800;color:#f8fafc;margin-bottom:4px;">'
+        f'🕐 ช่วงเวลาเทรดที่ดีที่สุด (Trading Sessions) · '
+        f'<span style="color:#fbbf24;">{info["now"].strftime("%H:%M น.")}</span></div>'
+        f'{banner}{rows}'
+        f'<div style="margin-top:12px;padding:10px 14px;border-left:3px solid #fbbf24;'
+        f'background:rgba(251,191,36,0.1);border-radius:6px;color:#fde68a;font-size:0.93rem;">'
+        f'🥇 <b>ช่วงทองคำ (XAUUSD) เคลื่อนไหวแรงที่สุด:</b> 19:00–23:30 น. (เวลาไทย) '
+        f'— ช่วงลอนดอนเปิดทับนิวยอร์ก ปริมาณหนาแน่น สเปรดแคบ เหมาะวางแผนเทรดรอบใหญ่</div>'
+        f'<div style="margin-top:8px;color:#64748b;font-size:0.78rem;">'
+        f'*เวลาโดยประมาณ (ICT UTC+7) ช่วง DST ต่างประเทศอาจเลื่อน ±1 ชม. อ้างอิงตามประกาศโบรกเกอร์</div>'
+        f'</div>'
+    )
+
+
 def render_html_table(rows: list, colors: list, actual_col: str, band_keys: list = None) -> str:
     """
     สร้าง HTML Table ที่อ่านง่าย ตัวเลขใหญ่ พอดีกับคอลัมน์
@@ -1582,6 +1695,10 @@ if "mtf_results" in locals():
         _atr_base = locals().get("atr_base_value") if "atr_base_value" in locals() else None
         _vol = compute_volatility(_atrv, _atr_base)
         st.markdown(_volatility_html(_atrv, _atr_base, _vol), unsafe_allow_html=True)
+
+    # 🕐 ช่วงเวลาเทรด (Trading Sessions) — แสดงเสมอ
+    _sess_info = compute_trading_sessions()
+    st.markdown(_sessions_html(_sess_info), unsafe_allow_html=True)
 
 # แท็บแสดง 3 มุมมองตามโจทย์: สรุปรายสัปดาห์, ดูแยกตามวัน, และ ปฏิทินรายเดือน
 tab_weekly, tab_daily, tab_calendar = st.tabs(
