@@ -698,13 +698,16 @@ def _verdict_panel_html(v: dict, countdown_fn) -> str:
             <span style="font-size:1.5rem;font-weight:800;color:{v['color']};">{v['icon']} {v['verdict']}</span>
         </div>
         <div style="margin-top:10px;">
-            <div style="font-size:0.85rem;color:#94a3b8;margin-bottom:3px;">ความสอดคล้องของกรอบเวลา (Confidence): {v['confidence']}%</div>
-            <div style="height:10px;background:rgba(255,255,255,0.08);border-radius:5px;overflow:hidden;">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:6px;">
+                <span style="font-size:1.1rem;font-weight:700;color:#e2e8f0;">ความสอดคล้องของกรอบเวลา (Confidence)</span>
+                <span style="font-size:1.6rem;font-weight:800;color:{conf_color};">{v['confidence']}%</span>
+            </div>
+            <div style="height:12px;background:rgba(255,255,255,0.08);border-radius:6px;overflow:hidden;">
                 <div style="height:100%;width:{v['confidence']}%;background:{conf_color};border-radius:5px;"></div>
             </div>
         </div>
-        <div style="margin-top:12px;font-size:1.05rem;color:#cbd5e1;">{dots}</div>
-        <div style="margin-top:10px;color:#e2e8f0;font-size:1rem;line-height:1.5;">💡 {v['note']}</div>
+        <div style="margin-top:12px;font-size:1.15rem;font-weight:700;color:#e2e8f0;letter-spacing:0.3px;">{dots}</div>
+        <div style="margin-top:12px;color:#f1f5f9;font-size:1.12rem;line-height:1.6;">💡 {v['note']}</div>
         {news_block}
     </div>
     """
