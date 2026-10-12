@@ -3203,6 +3203,7 @@ if "mtf_results" in locals():
         st.markdown(_sr_panel_html(sr_info), unsafe_allow_html=True)
 
     # 📊 RSI(14) + Divergence และ 🏗 โครงสร้างราคา — ตัวช่วยยืนยันที่สอง/สาม
+    _atrv = locals().get("atr_value") if "atr_value" in locals() else None
     _df_now = locals().get("df_ema_full")
     if _df_now is not None and len(_df_now) > 0:
         try:
