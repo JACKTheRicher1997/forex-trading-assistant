@@ -1361,63 +1361,6 @@ def compute_market_structure(df, lookback: int = 80, pivot_window: int = 3) -> d
     return res
 
 
-def _market_structure_html(ms: dict, timeframe_str: str) -> str:
-    """สร้างแผงโครงสร้างราคา"""
-    if not ms or ms.get("trend") == "UNKNOWN":
-        return ""
-    chips = []
-    for key, text, col in (
-        ("hh", "🔺 HH (จุดสูงขึ้น)", "#10b981"),
-        ("hl", "🟢 HL (จุดต่ำขึ้น)", "#10b981"),
-        ("lh", "🔻 LH (จุดสูงลง)", "#ef4444"),
-        ("ll", "🔴 LL (จุดต่ำลง)", "#ef4444"),
-    ):
-        val = ms.get(key)
-        if val is not None and ms.get({"hh": "higher_high", "hl": "higher_low",
-                                      "lh": "lower_high", "ll": "lower_low"}[key]):
-            chips.append(
-                f'<span style="background:rgba(15,23,42,0.9);border:1px solid {col};'
-                f'border-radius:8px;padding:4px 8px;color:{col};font-size:0.85rem;">'
-                f'{text}: {val:,.2f}</span>'
-            )
-
-    bos = ms.get("bos")
-    if bos == "BULLISH":
-        bos_html = (
-            f'<div style="margin-top:8px;color:#10b981;font-size:0.93rem;">'
-            f'🚀 <b>BOS ขาขึ้น</b> — ราคาปิดทะลุจุดสูงโครงสร้างที่ {ms.get("bos_price"):,.2f} '
-            f'ผู้ซื้อมีอำนาจเหนือ (ถือว่าโครงสร้างเปลี่ยนเป็นขาขึ้น)</div>'
-        )
-    elif bos == "BEARISH":
-        bos_html = (
-            f'<div style="margin-top:8px;color:#ef4444;font-size:0.93rem;">'
-            f'💥 <b>BOS ขาลง</b> — ราคาปิดทะลุจุดต่ำโครงสร้างที่ {ms.get("bos_price"):,.2f} '
-            f'ผู้ขายมีอำนาจเหนือ (ถือว่าโครงสร้างเปลี่ยนเป็นขาลง)</div>'
-        )
-    else:
-        bos_html = (
-            '<div style="margin-top:8px;color:#64748b;font-size:0.93rem;">'
-            '— ยังไม่มีการทะลุโครงสร้าง (BOS) ราคายังอยู่ในโครงสร้างเดิม</div>'
-        )
-
-    chips_html = f'<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">{"".join(chips)}</div>' if chips else ""
-    return (
-        f'<div style="background:rgba(15,23,42,0.9);border:1px solid {ms["color"]};'
-        f'border-radius:14px;padding:16px 20px;margin:12px 0 6px 0;">'
-        f'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">'
-        f'<span style="font-size:1.15rem;font-weight:800;color:#f8fafc;">'
-        f'🏗 โครงสร้างราคา (Market Structure) · {timeframe_str}</span>'
-        f'<span style="font-size:1.05rem;font-weight:800;color:{ms["color"]};">{ms["label"]}</span>'
-        f'</div>'
-        f'<div style="margin-top:8px;color:#e2e8f0;font-size:0.95rem;">💡 {ms["note"]}</div>'
-        f'{chips_html}'
-        f'{bos_html}'
-        f'<div style="margin-top:6px;color:#64748b;font-size:0.78rem;">'
-        f'*จุดสูง/ต่ำคำนวณจากแท่งเทียน {timeframe_str} — ใช้ประกอบกับแนวรับ/แนวต้านและ EMA</div>'
-        f'</div>'
-    )
-
-
 def _zz_time(ts) -> str:
     """จัดรูปแบบเวลาจุดสวิงเป็นเวลาไทยแบบสั้น (DD/MM HH:MM)"""
     if ts is None:
@@ -3202,7 +3145,7 @@ if "mtf_results" in locals():
     if "sr_info" in locals() and sr_info and sr_info["levels"]:
         st.markdown(_sr_panel_html(sr_info), unsafe_allow_html=True)
 
-    # 📊 RSI(14) + Divergence และ 🏗 โครงสร้างราคา — ตัวช่วยยืนยันที่สอง/สาม
+    # 📊 RSI(14) + Divergence — ตัวช่วยยืนยันที่สอง
     _atrv = locals().get("atr_value") if "atr_value" in locals() else None
     _df_now = locals().get("df_ema_full")
     if _df_now is not None and len(_df_now) > 0:
@@ -3213,9 +3156,9 @@ if "mtf_results" in locals():
             logger.warning(f"แผง RSI แสดงไม่ได้: {_e}")
         try:
             _ms = compute_market_structure(_df_now)
-            st.markdown(_market_structure_html(_ms, selected_tf), unsafe_allow_html=True)
         except Exception as _e:
-            logger.warning(f"แผงโครงสร้างราคาแสดงไม่ได้: {_e}")
+            logger.warning(f"คำนวณโครงสร้างราคาไม่ได้: {_e}")
+            _ms = None
         # 🧩 ZigZag 12,5,3 + แผนย่อเข้าตามเทรน — ใช้สวิงไฮ/โลจริงยืนยันจุดเข้า
         try:
             _zz_calc = getattr(indicator_service, "compute_zigzag", None)
