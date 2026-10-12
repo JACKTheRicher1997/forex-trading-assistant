@@ -1610,6 +1610,135 @@ def _market_structure_html(ms: dict, timeframe_str: str) -> str:
     )
 
 
+def _zz_time(ts) -> str:
+    """จัดรูปแบบเวลาจุดสวิงเป็นเวลาไทยแบบสั้น (DD/MM HH:MM)"""
+    if ts is None:
+        return "—"
+    try:
+        return (_candle_as_naive_utc(ts) + datetime.timedelta(hours=7)).strftime("%d/%m %H:%M")
+    except Exception:
+        return "—"
+
+
+def _zigzag_panel_html(zz: dict, ms: dict, atr: Optional[float] = None, timeframe_str: str = "") -> str:
+    """
+    แผง ZigZag (Depth 12 / Deviation 5 / Backstep 3) + แผนเข้าตามเทรนแบบย่อ (Pullback)
+    ใช้จุดสวิงไฮ/สวิงโลล่าสุดกำหนดโซนย่อเข้า, จุดยกเลิก (SL) และเป้า (TP)
+    """
+    if not zz or not zz.get("points"):
+        return ""
+    last_high = zz.get("last_high")
+    last_low = zz.get("last_low")
+    last_kind = zz.get("last_kind")
+    trend = (ms or {}).get("trend", "UNKNOWN")
+    trend_color = (ms or {}).get("color", "#94a3b8")
+    trend_label = (ms or {}).get("label", "โครงสร้างยังไม่ชัด")
+
+    swing_html = (
+        '<div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:0.92rem;">'
+        f'<span style="color:#ef4444;">🔻 Swing High ล่าสุด: <b>{last_high:,.2f}</b>'
+        f' <span style="color:#64748b;">({_zz_time(zz.get("last_high_time"))})</span></span>'
+        if last_high is not None else
+        '<div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:0.92rem;">'
+        '<span style="color:#ef4444;">🔻 Swing High ล่าสุด: —</span>'
+    )
+    swing_html += (
+        f'<span style="color:#10b981;">🟢 Swing Low ล่าสุด: <b>{last_low:,.2f}</b>'
+        f' <span style="color:#64748b;">({_zz_time(zz.get("last_low_time"))})</span></span>'
+        '</div>'
+        if last_low is not None else
+        '<span style="color:#10b981;">🟢 Swing Low ล่าสุด: —</span></div>'
+    )
+
+    buf = max((atr or 0.0) * 0.25, 0.0)
+    setup_html = ""
+    if trend == "UP" and last_low is not None:
+        if last_kind == "L":
+            entry = float(last_low)
+            sl = entry - buf
+            tp = float(last_high) if last_high is not None else None
+            risk = entry - sl
+            if tp is not None and risk > 0:
+                rr = (tp - entry) / risk
+                rr_txt = f'{rr:.1f}:1'
+                rr_col = "#10b981" if rr >= 1.5 else "#f59e0b"
+            else:
+                rr_txt, rr_col = "—", "#94a3b8"
+            tp_txt = f'{tp:,.2f}' if tp is not None else "—"
+            setup_html = (
+                '<div style="margin-top:10px;background:rgba(16,185,129,0.10);'
+                'border:1px solid #10b981;border-radius:10px;padding:10px 12px;font-size:0.92rem;">'
+                '<div style="color:#10b981;font-weight:800;">🟢 เทรนขาขึ้น — แผนเข้าซื้อแบบย่อ (Buy the dip)</div>'
+                f'<div style="color:#e2e8f0;margin-top:6px;">โซนเข้า (แนวรับ Higher Low): '
+                f'<b style="color:#f8fafc;">{entry:,.2f}</b></div>'
+                f'<div style="color:#cbd5e1;margin-top:4px;">SL ใต้ <b style="color:#ef4444;">{sl:,.2f}</b>'
+                f' · TP <b style="color:#10b981;">{tp_txt}</b>'
+                f' · R:R <b style="color:{rr_col};">{rr_txt}</b></div>'
+                '</div>'
+            )
+        else:
+            setup_html = (
+                '<div style="margin-top:10px;background:rgba(15,23,42,0.9);border:1px solid #334155;'
+                'border-radius:10px;padding:10px 12px;color:#cbd5e1;font-size:0.92rem;">'
+                '⏳ ราคาเพิ่งทำ <b>จุดสูงใหม่</b> — รอย่อลงมาแตะแนวรับ (Higher Low) '
+                'แล้วค่อยเข้าซื้อตามเทรน (อย่าไล่ซื้อที่จุดสูง)</div>'
+            )
+    elif trend == "DOWN" and last_high is not None:
+        if last_kind == "H":
+            entry = float(last_high)
+            sl = entry + buf
+            tp = float(last_low) if last_low is not None else None
+            risk = sl - entry
+            if tp is not None and risk > 0:
+                rr = (entry - tp) / risk
+                rr_txt = f'{rr:.1f}:1'
+                rr_col = "#10b981" if rr >= 1.5 else "#f59e0b"
+            else:
+                rr_txt, rr_col = "—", "#94a3b8"
+            tp_txt = f'{tp:,.2f}' if tp is not None else "—"
+            setup_html = (
+                '<div style="margin-top:10px;background:rgba(239,68,68,0.10);'
+                'border:1px solid #ef4444;border-radius:10px;padding:10px 12px;font-size:0.92rem;">'
+                '<div style="color:#ef4444;font-weight:800;">🔴 เทรนขาลง — แผนเข้าขายแบบย่อ (Sell the rally)</div>'
+                f'<div style="color:#e2e8f0;margin-top:6px;">โซนเข้า (แนวต้าน Lower High): '
+                f'<b style="color:#f8fafc;">{entry:,.2f}</b></div>'
+                f'<div style="color:#cbd5e1;margin-top:4px;">SL เหนือ <b style="color:#ef4444;">{sl:,.2f}</b>'
+                f' · TP <b style="color:#10b981;">{tp_txt}</b>'
+                f' · R:R <b style="color:{rr_col};">{rr_txt}</b></div>'
+                '</div>'
+            )
+        else:
+            setup_html = (
+                '<div style="margin-top:10px;background:rgba(15,23,42,0.9);border:1px solid #334155;'
+                'border-radius:10px;padding:10px 12px;color:#cbd5e1;font-size:0.92rem;">'
+                '⏳ ราคาเพิ่งทำ <b>จุดต่ำใหม่</b> — รอเด้งขึ้นมาแตะแนวต้าน (Lower High) '
+                'แล้วค่อยเข้าขายตามเทรน (อย่าไล่ขายที่จุดต่ำ)</div>'
+            )
+    else:
+        setup_html = (
+            '<div style="margin-top:10px;background:rgba(15,23,42,0.9);border:1px solid #334155;'
+            'border-radius:10px;padding:10px 12px;color:#cbd5e1;font-size:0.92rem;">'
+            '➖ โครงสร้างยังไม่ใช่ขาขึ้น/ขาลงชัดเจน — รอราคาสร้าง HH+HL หรือ LH+LL '
+            'ก่อนจึงเข้าตามเทรนแบบย่อ</div>'
+        )
+
+    return (
+        f'<div style="background:rgba(15,23,42,0.9);border:1px solid {trend_color};'
+        f'border-radius:14px;padding:16px 20px;margin:12px 0 6px 0;">'
+        f'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">'
+        f'<span style="font-size:1.15rem;font-weight:800;color:#f8fafc;">'
+        f'🧩 ZigZag 12,5,3 &amp; จุดย่อเข้า (Pullback) · {timeframe_str}</span>'
+        f'<span style="font-size:1.05rem;font-weight:800;color:{trend_color};">{trend_label}</span>'
+        f'</div>'
+        f'{swing_html}'
+        f'{setup_html}'
+        f'<div style="margin-top:8px;color:#64748b;font-size:0.78rem;">'
+        f'*สวิงจาก ZigZag (Depth 12 = จุดสุดขั้วอยู่ตัว 12 แท่ง · Deviation 5 = ย้อนกลับ 5 point · '
+        f'Backstep 3 = จุดสวิงห่างกัน ≥ 3 แท่ง) ใช้ยืนยัน "ตามเทรนแล้วย่อเข้า" ไม่ใช่สัญญาณอัตโนมัติ</div>'
+        f'</div>'
+    )
+
+
 # ==========================================
 # DXY (US Dollar Index) - ตัวขับเคลื่อนทองคำ/คู่เงินฝั่ง USD
 # ==========================================
@@ -2685,6 +2814,43 @@ if df_ema_full is not None and len(df_ema_full) > 0:
                 col=1,
             )
 
+        # เส้น ZigZag (Depth 12 / Deviation 5 / Backstep 3) — เชื่อมจุดสวิงไฮ/สวิงโล
+        zigzag_data = indicator_service.compute_zigzag(
+            df_ema_full,
+            12,
+            5,
+            3,
+            point=_instrument_spec(selected_symbol).get("pip", 0.0),
+        )
+        _zz_pts = [
+            p
+            for p in zigzag_data.get("points", [])
+            if p.get("time") is not None and p["time"] >= df_plot["time"].iloc[0]
+        ]
+        if len(_zz_pts) >= 2:
+            fig_chart.add_trace(
+                go.Scatter(
+                    x=[p["time"] for p in _zz_pts],
+                    y=[p["price"] for p in _zz_pts],
+                    mode="lines+markers",
+                    line=dict(color="rgba(250,204,21,0.85)", width=1.6),
+                    marker=dict(
+                        size=8,
+                        color=["#ef4444" if p["kind"] == "H" else "#22c55e" for p in _zz_pts],
+                        line=dict(color="#0b0e14", width=1),
+                    ),
+                    name="ZigZag 12,5,3",
+                    hovertext=[
+                        ("Swing High " if p["kind"] == "H" else "Swing Low ")
+                        + f'{p["price"]:,.2f}'
+                        for p in _zz_pts
+                    ],
+                    hoverinfo="text+x",
+                ),
+                row=1,
+                col=1,
+            )
+
         # ปริมาณ Volume ด้านล่าง
         fig_chart.add_trace(
             go.Bar(
@@ -2801,6 +2967,18 @@ if "mtf_results" in locals():
             st.markdown(_market_structure_html(_ms, selected_tf), unsafe_allow_html=True)
         except Exception as _e:
             logger.warning(f"แผงโครงสร้างราคาแสดงไม่ได้: {_e}")
+        # 🧩 ZigZag 12,5,3 + แผนย่อเข้าตามเทรน — ใช้สวิงไฮ/โลจริงยืนยันจุดเข้า
+        try:
+            _zz = locals().get("zigzag_data") or indicator_service.compute_zigzag(
+                _df_now, 12, 5, 3, point=_instrument_spec(selected_symbol).get("pip", 0.0)
+            )
+            _ms_zz = locals().get("_ms") or compute_market_structure(_df_now)
+            st.markdown(
+                _zigzag_panel_html(_zz, _ms_zz, _atrv, selected_tf),
+                unsafe_allow_html=True,
+            )
+        except Exception as _e:
+            logger.warning(f"แผง ZigZag แสดงไม่ได้: {_e}")
 
     # 🌡️ เกจวัดความผันผวน (ATR ปัจจุบัน vs เฉลี่ยระยะยาว) — แสดงเสมอเมื่อมีข้อมูล
     if _atrv:

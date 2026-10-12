@@ -322,6 +322,148 @@ class IndicatorService:
         return list(reversed(kept))
 
     # ------------------------------------------------------------------
+    def compute_zigzag(
+        self,
+        df: pd.DataFrame,
+        depth: int = 12,
+        deviation: float = 5.0,
+        backstep: int = 3,
+        point: float = 0.0,
+    ) -> dict:
+        """
+        คำนวณ ZigZag (Depth, Deviation, Backstep) สไตล์ MT4/MT5
+        เชื่อม "จุดสวิงไฮ/สวิงโล" ที่สำคัญ เพื่อให้เห็นขาใหญ่ของราคาโดยตัดสัญญาณหลอกออก
+        - Depth: จุดสุดขั้วต้อง "อยู่ตัว" ครบ depth แท่งก่อนยืนยันเป็นสวิง
+        - Deviation: ระยะแกว่งย้อนกลับขั้นต่ำ (หน่วย point) ที่ต้องเกินก่อนเปลี่ยนขา
+        - Backstep: จำนวนแท่งขั้นต่ำระหว่างจุดสวิงสองจุดติดกัน (จุดที่ถี่เกินจะถูกยุบรวม)
+
+        ค่าเริ่มต้น 12, 5, 3 คือค่ามาตรฐานของ MT4/MT5 ZigZag
+        :param point: ขนาด 1 point ของสัญลักษณ์ (<=0 = ประมาณจากระดับราคาอัตโนมัติ)
+        :return: dict {points, last_high, last_low, last_kind, prev_high, prev_low, ...}
+        """
+        empty = {
+            "points": [], "direction": 0, "last_kind": None,
+            "last_high": None, "last_high_time": None, "last_high_idx": None,
+            "last_low": None, "last_low_time": None, "last_low_idx": None,
+            "prev_high": None, "prev_low": None,
+            "depth": depth, "deviation": deviation, "backstep": backstep,
+        }
+        if df is None or len(df) < depth + backstep + 2:
+            return empty
+        try:
+            highs = [float(x) for x in df["high"].tolist()]
+            lows = [float(x) for x in df["low"].tolist()]
+        except Exception:
+            return empty
+        try:
+            times = df["time"].tolist()
+        except Exception:
+            times = [None] * len(highs)
+
+        n = len(highs)
+        # ประมาณขนาด point จากระดับราคา ถ้าผู้เรียกไม่ระบุ (ใช้ได้ทุกสินทรัพย์)
+        if point <= 0:
+            ref = abs(highs[-1]) or 1.0
+            point = 0.01 if ref >= 1000 else (0.001 if ref >= 10 else 0.00001)
+        dev = max(deviation * point, 0.0)
+
+        pivots: list = []          # [idx, price, "H"/"L"]
+        last = None                # ชนิดของสวิงที่ยืนยันล่าสุด
+        cur_high_idx, cur_high = 0, highs[0]
+        cur_low_idx, cur_low = 0, lows[0]
+
+        for i in range(1, n):
+            if highs[i] > cur_high:
+                cur_high, cur_high_idx = highs[i], i
+            if lows[i] < cur_low:
+                cur_low, cur_low_idx = lows[i], i
+
+            hi_ready = (cur_high - lows[i]) >= dev and (i - cur_high_idx) >= depth
+            lo_ready = (highs[i] - cur_low) >= dev and (i - cur_low_idx) >= depth
+
+            if last is None:
+                # เลือกสวิงแรกจากฝั่งที่ย้อนกลับก่อน (ถ้าพร้อมทั้งคู่ เลือกจุดสุดขั้วที่ใหม่กว่า)
+                if hi_ready and (not lo_ready or cur_high_idx >= cur_low_idx):
+                    pivots.append([cur_high_idx, cur_high, "H"])
+                    last = "H"
+                    cur_low, cur_low_idx = lows[i], i
+                elif lo_ready:
+                    pivots.append([cur_low_idx, cur_low, "L"])
+                    last = "L"
+                    cur_high, cur_high_idx = highs[i], i
+            elif last == "H":
+                if lo_ready:
+                    pivots.append([cur_low_idx, cur_low, "L"])
+                    last = "L"
+                    cur_high, cur_high_idx = highs[i], i
+            else:  # last == "L"
+                if hi_ready:
+                    pivots.append([cur_high_idx, cur_high, "H"])
+                    last = "H"
+                    cur_low, cur_low_idx = lows[i], i
+
+        # เก็บจุดสุดขั้วล่าสุดที่ยังไม่ถูกยืนยัน เพื่อให้เส้นต่อถึงแท่งปัจจุบัน
+        if last == "L":
+            pivots.append([cur_high_idx, cur_high, "H"])
+        elif last == "H":
+            pivots.append([cur_low_idx, cur_low, "L"])
+
+        # ยุบรวมจุดชนิดเดียวกัน + จุดที่ถี่เกิน backstep ให้เหลือจุดสุดขั้วกว่า
+        collapsed: list = []
+        for p in pivots:
+            if not collapsed:
+                collapsed.append(p)
+                continue
+            prev = collapsed[-1]
+            if p[2] == prev[2]:
+                more = (p[1] > prev[1]) if p[2] == "H" else (p[1] < prev[1])
+                if more:
+                    collapsed[-1] = p
+                continue
+            if (p[0] - prev[0]) < backstep:
+                more = (p[1] > prev[1]) if p[2] == "H" else (p[1] < prev[1])
+                if more:
+                    collapsed[-1] = p
+                continue
+            collapsed.append(p)
+
+        final: list = []
+        for p in collapsed:
+            if final and final[-1][2] == p[2]:
+                more = (p[1] > final[-1][1]) if p[2] == "H" else (p[1] < final[-1][1])
+                if more:
+                    final[-1] = p
+                continue
+            final.append(p)
+
+        res = dict(empty)
+        res["points"] = [
+            {
+                "idx": idx,
+                "time": times[idx] if idx < len(times) else None,
+                "price": price,
+                "kind": kind,
+            }
+            for idx, price, kind in final
+        ]
+        if final:
+            res["last_kind"] = final[-1][2]
+            res["direction"] = 1 if final[-1][2] == "L" else -1
+        highs_p = [x for x in final if x[2] == "H"]
+        lows_p = [x for x in final if x[2] == "L"]
+        if highs_p:
+            res["last_high"], res["last_high_idx"] = highs_p[-1][1], highs_p[-1][0]
+            res["last_high_time"] = times[highs_p[-1][0]] if highs_p[-1][0] < len(times) else None
+            if len(highs_p) >= 2:
+                res["prev_high"] = highs_p[-2][1]
+        if lows_p:
+            res["last_low"], res["last_low_idx"] = lows_p[-1][1], lows_p[-1][0]
+            res["last_low_time"] = times[lows_p[-1][0]] if lows_p[-1][0] < len(times) else None
+            if len(lows_p) >= 2:
+                res["prev_low"] = lows_p[-2][1]
+        return res
+
+    # ------------------------------------------------------------------
     def _advance_last_cross(self, state_key: str, record, new_time, new_signal) -> Optional[dict]:
         """
         เลื่อน "เข็ม" last_cross ในฐานข้อมูลสัญญาณไปที่ EMA Cross ครั้งล่าสุด
