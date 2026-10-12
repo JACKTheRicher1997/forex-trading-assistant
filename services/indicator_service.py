@@ -463,6 +463,220 @@ class IndicatorService:
                 res["prev_low"] = lows_p[-2][1]
         return res
 
+    def compute_obv(self, df: pd.DataFrame) -> list:
+        """คำนวณ On-Balance Volume (OBV) — ทิศทางแรงซื้อ/ขายสะสมแบบมาตรฐาน"""
+        obv: list = []
+        if df is None or len(df) == 0:
+            return obv
+        try:
+            closes = [float(c) for c in df["close"].tolist()]
+        except Exception:
+            return obv
+        try:
+            vols = [float(v) for v in df["tick_volume"].tolist()]
+        except Exception:
+            vols = [1.0] * len(closes)
+        acc = 0.0
+        prev_close = None
+        for c, v in zip(closes, vols):
+            if prev_close is not None:
+                if c > prev_close:
+                    acc += v
+                elif c < prev_close:
+                    acc -= v
+            obv.append(acc)
+            prev_close = c
+        return obv
+
+    def compute_obv_divergence(
+        self, df: pd.DataFrame, lookback: int = 80, pivot_window: int = 2
+    ) -> dict:
+        """
+        ตรวจ OBV Divergence (เปรียบเทียบจุดสวิงของราคากับ OBV)
+        - Bullish: ราคาทำจุดต่ำใหม่ แต่ OBV ทำจุดต่ำสูงขึ้น -> แรงขายหมด (พร้อมเด้ง)
+        - Bearish: ราคาทำจุดสูงใหม่ แต่ OBV ทำจุดสูงต่ำลง -> แรงซื้อหมด (พร้อมย่อ)
+        """
+        empty = {"type": None, "note": "ยังไม่พบ OBV Divergence ที่ชัดเจน", "obv": None}
+        if df is None or len(df) < pivot_window * 2 + 6:
+            return empty
+        try:
+            closes = [float(c) for c in df["close"].tolist()]
+        except Exception:
+            return empty
+        obv = self.compute_obv(df)
+        if len(obv) != len(closes):
+            return empty
+        n = len(closes)
+        window = min(lookback, n)
+        c_win = closes[-window:]
+        o_win = obv[-window:]
+
+        piv_hi, piv_lo = [], []
+        for i in range(pivot_window, len(c_win) - pivot_window):
+            seg_c = c_win[i - pivot_window: i + pivot_window + 1]
+            if c_win[i] == max(seg_c) and seg_c.count(c_win[i]) == 1:
+                piv_hi.append((i, c_win[i], o_win[i]))
+            if c_win[i] == min(seg_c) and seg_c.count(c_win[i]) == 1:
+                piv_lo.append((i, c_win[i], o_win[i]))
+
+        sig_hi = self._significant_pivots(piv_hi, max(3, pivot_window * 2 + 1), higher=True)
+        sig_lo = self._significant_pivots(piv_lo, max(3, pivot_window * 2 + 1), higher=False)
+
+        res = dict(empty)
+        res["obv"] = o_win[-1]
+        if len(sig_hi) >= 2:
+            (_, p1, o1), (_, p2, o2) = sig_hi[-2], sig_hi[-1]
+            if p2 > p1 and o2 < o1:
+                res["type"] = "BEARISH"
+                res["note"] = (
+                    f'ราคาทำจุดสูงใหม่ ({p1:,.2f} → {p2:,.2f}) แต่ OBV อ่อนลง '
+                    f'({o1:,.0f} → {o2:,.0f}) — แรงซื้อหมด มักตามด้วยการย่อ/กลับตัว'
+                )
+                return res
+        if len(sig_lo) >= 2:
+            (_, p1, o1), (_, p2, o2) = sig_lo[-2], sig_lo[-1]
+            if p2 < p1 and o2 > o1:
+                res["type"] = "BULLISH"
+                res["note"] = (
+                    f'ราคาทำจุดต่ำใหม่ ({p1:,.2f} → {p2:,.2f}) แต่ OBV แข็งขึ้น '
+                    f'({o1:,.0f} → {o2:,.0f}) — แรงขายหมด มักตามด้วยการเด้งตามเทรน'
+                )
+                return res
+        return res
+
+    def compute_macd(
+        self, df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9
+    ) -> dict:
+        """
+        คำนวณ MACD — โมเมนตัม + Histogram + จำนวนแท่งตั้งแต่ Cross ล่าสุด
+        :return: dict {macd, signal, hist, hist_prev, state, color, cross, cross_bars}
+        """
+        empty = {
+            "macd": None, "signal": None, "hist": None, "hist_prev": None,
+            "state": "ข้อมูลไม่พอ", "color": "#94a3b8",
+            "cross": "NONE", "cross_bars": None,
+        }
+        if df is None or len(df) < slow + signal:
+            return empty
+        try:
+            closes = [float(c) for c in df["close"].tolist()]
+        except Exception:
+            return empty
+        if len(closes) < slow:
+            return empty
+
+        s = pd.Series(closes)
+        ema_fast = s.ewm(span=fast, adjust=False).mean()
+        ema_slow = s.ewm(span=slow, adjust=False).mean()
+        macd_line = (ema_fast - ema_slow).tolist()
+        sig_line = (pd.Series(macd_line).ewm(span=signal, adjust=False).mean()).tolist()
+        hist = [m - s_ for m, s_ in zip(macd_line, sig_line)]
+
+        res = dict(empty)
+        res["macd"], res["signal"], res["hist"] = macd_line[-1], sig_line[-1], hist[-1]
+        res["hist_prev"] = hist[-2]
+        cross = "NONE"
+        cross_bars = None
+        for i in range(len(macd_line) - 1, 0, -1):
+            prev_bull = macd_line[i - 1] >= sig_line[i - 1]
+            cur_bull = macd_line[i] >= sig_line[i]
+            if prev_bull != cur_bull:
+                cross = "GOLDEN" if cur_bull else "DEATH"
+                cross_bars = len(macd_line) - 1 - i
+                break
+        res["cross"], res["cross_bars"] = cross, cross_bars
+
+        if res["macd"] >= res["signal"]:
+            base = "MACD เหนือ Signal"
+            res["color"] = "#10b981"
+        else:
+            base = "MACD ใต้ Signal"
+            res["color"] = "#ef4444"
+        mom = "โมเมนตัมเพิ่มขึ้น" if res["hist"] > res["hist_prev"] else "โมเมนตัมลดลง"
+        res["state"] = f"{base} · {mom}"
+        return res
+
+    def detect_candle_patterns(self, df: pd.DataFrame, lookback: int = 10) -> list:
+        """
+        ตรวจแท่งกลับตัวแบบ Price Action ล่าสุด (Pin Bar / Engulfing)
+        :return: list ของ dict {kind, side, idx, time, price, note}
+        """
+        out: list = []
+        if df is None or len(df) == 0:
+            return out
+        try:
+            opens = [float(x) for x in df["open"].tolist()]
+            highs = [float(x) for x in df["high"].tolist()]
+            lows = [float(x) for x in df["low"].tolist()]
+            closes = [float(x) for x in df["close"].tolist()]
+        except Exception:
+            return out
+        try:
+            times = df["time"].tolist()
+        except Exception:
+            times = [None] * len(closes)
+
+        n = len(closes)
+        start = max(1, n - lookback)
+        for i in range(start, n):
+            o, h, l, c = opens[i], highs[i], lows[i], closes[i]
+            body = abs(c - o)
+            rng = max(h - l, 1e-9)
+            lower_wick = min(o, c) - l
+            upper_wick = h - max(o, c)
+
+            # Pin Bar: เงายาวฝั่งหนึ่ง ≥ 2 เท่าร่าง (และเงาอีกฝั่งสั้น) + ปิดกลับทางเดิม
+            if c > o and lower_wick >= 2.0 * max(body, upper_wick) and upper_wick <= 0.25 * rng:
+                out.append({
+                    "kind": "BULLISH_PIN", "side": "BUY", "idx": i,
+                    "time": times[i], "price": c,
+                    "note": "Bullish Pin Bar — เงาล่างยาว ราคาถูกดึงกลับ แรงซื้อเริ่มคุม",
+                })
+            elif o > c and upper_wick >= 2.0 * max(body, lower_wick) and lower_wick <= 0.25 * rng:
+                out.append({
+                    "kind": "BEARISH_PIN", "side": "SELL", "idx": i,
+                    "time": times[i], "price": c,
+                    "note": "Bearish Pin Bar — เงาบนยาว ราคาถูกกดกลับ แรงขายเริ่มคุม",
+                })
+
+            # Engulfing: แท่งปัจจุบันกลืนร่างแท่งก่อนหน้าทั้งแท่ง
+            if i > 0:
+                po, pc = opens[i - 1], closes[i - 1]
+                if pc < po and c > o and c >= po and o <= pc:
+                    out.append({
+                        "kind": "BULLISH_ENGULF", "side": "BUY", "idx": i,
+                        "time": times[i], "price": c,
+                        "note": "Bullish Engulfing — แท่งเขียวกลืนแท่งแดง ฝั่งซื้อคุม",
+                    })
+                elif pc > po and o > c and o >= pc and c <= po:
+                    out.append({
+                        "kind": "BEARISH_ENGULF", "side": "SELL", "idx": i,
+                        "time": times[i], "price": c,
+                        "note": "Bearish Engulfing — แท่งแดงกลืนแท่งเขียว ฝั่งขายคุม",
+                    })
+        return out
+
+    def compute_vwap(self, df: pd.DataFrame) -> Optional[float]:
+        """คำนวณ VWAP (Typical Price ถ่วงน้ำหนัก tick_volume; ถ้าไม่มี volume ใช้ 1)"""
+        if df is None or len(df) == 0:
+            return None
+        try:
+            highs = [float(x) for x in df["high"].tolist()]
+            lows = [float(x) for x in df["low"].tolist()]
+            closes = [float(x) for x in df["close"].tolist()]
+        except Exception:
+            return None
+        try:
+            vols = [float(v) for v in df["tick_volume"].tolist()]
+        except Exception:
+            vols = [1.0] * len(closes)
+        tp_vol = 0.0
+        vol_sum = 0.0
+        for h, l, c, v in zip(highs, lows, closes, vols):
+            tp_vol += ((h + l + c) / 3.0) * v
+            vol_sum += v
+        return (tp_vol / vol_sum) if vol_sum > 0 else None
+
     # ------------------------------------------------------------------
     def _advance_last_cross(self, state_key: str, record, new_time, new_signal) -> Optional[dict]:
         """

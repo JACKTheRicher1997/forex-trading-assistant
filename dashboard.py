@@ -1620,6 +1620,343 @@ def _zz_time(ts) -> str:
         return "—"
 
 
+def _zigzag_fib(pts: list, ms: dict) -> Optional[dict]:
+    """
+    Fibonacci ของ 'ขา ZigZag ที่ตรงกับเทรน' ล่าสุด
+    - เทรน UP : ขาจาก Swing Low -> Swing High (มองหาย่อเข้า)  ระดับ = High - (High-Low)*ratio
+    - เทรน DOWN: ขาจาก Swing High -> Swing Low              ระดับ = Low + (High-Low)*ratio
+    :return dict(direction, levels{ratio:price}, zone_low, zone_high,
+                 start_price, end_price, start_time, end_time) หรือ None
+    """
+    trend = (ms or {}).get("trend", "UNKNOWN")
+    uptrend = trend in ("UP", "BULLISH")
+    if not pts or len(pts) < 2:
+        return None
+    start = end = None
+    for i in range(len(pts) - 1, 0, -1):
+        a, b = pts[i - 1], pts[i]
+        if uptrend and a.get("kind") == "L" and b.get("kind") == "H":
+            start, end = a, b
+            break
+        if (not uptrend) and a.get("kind") == "H" and b.get("kind") == "L":
+            start, end = a, b
+            break
+    if start is None or end is None:
+        return None
+    try:
+        lo, hi = float(start["price"]), float(end["price"])
+    except Exception:
+        return None
+    lo, hi = min(lo, hi), max(lo, hi)
+    if hi - lo <= 0:
+        return None
+    levels = {}
+    for r in (0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0):
+        levels[r] = hi - (hi - lo) * r if uptrend else lo + (hi - lo) * r
+    if uptrend:
+        zone_low, zone_high = levels[0.618], levels[0.5]
+    else:
+        zone_low, zone_high = levels[0.5], levels[0.618]
+    return {
+        "direction": "UP" if uptrend else "DOWN",
+        "start_price": lo,
+        "end_price": hi,
+        "levels": levels,
+        "zone_low": zone_low,
+        "zone_high": zone_high,
+        "start_time": start.get("time"),
+        "end_time": end.get("time"),
+    }
+
+
+def _reversal_panel_html(rev: dict, timeframe_str: str = "") -> str:
+    """แผงรวม 'จุดกลับตัวตามเทรน' — Fib + OBV + แท่งกลับตัว + MACD + VWAP"""
+    if not rev:
+        return ""
+    trend = rev.get("trend", "UNKNOWN")
+    trend_label = rev.get("trend_label", "โครงสร้างไม่ชัด")
+    trend_color = rev.get("trend_color", "#94a3b8")
+    verdict = rev.get("verdict", "")
+    verdict_color = rev.get("verdict_color", "#f59e0b")
+    fib = rev.get("fib")
+    close = rev.get("close")
+    atr = rev.get("atr")
+
+    rows_html = ""
+
+    # Fibonacci + โซนย่อ
+    if fib:
+        zone_txt = (
+            f"{fib['zone_low']:,.2f} – {fib['zone_high']:,.2f}"
+        )
+        pct_txt = ""
+        if close is not None:
+            rng = max(fib["end_price"] - fib["start_price"], 1e-9)
+            pct = (close - fib["start_price"]) / rng * 100.0
+            pct_txt = f" · ราคาอยู่ที่ <b>{pct:.0f}%</b> ของขา"
+        zone_ok = rev.get("zone_ok", False)
+        zone_col = "#10b981" if zone_ok else "#f59e0b"
+        zone_state = "ราคาอยู่ในโซนย่อ 🎯" if zone_ok else (
+            "รอราคาย่อเข้าโซน" if (rev.get("zone_near") and close < fib["zone_low"]) or (
+                rev.get("zone_near") and close > fib["zone_high"]
+            ) else "ราคายังไม่ถึงโซนย่อ"
+        )
+        rows_html += (
+            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+            f'padding:7px 10px;border-bottom:1px solid rgba(148,163,184,0.15);gap:10px;">'
+            f'<span style="color:#64748b;">📐 <b>Fib ย่อ {fib["direction"]}</b> '
+            f'<span style="color:#475569;">(50.0–61.8%)</span></span>'
+            f'<span style="color:{zone_col};font-weight:600;">โซนย่อ {zone_txt}{pct_txt}</span>'
+            f'</div>'
+            f'<div style="padding:3px 10px 7px 10px;color:#94a3b8;font-size:0.8rem;">'
+            f'สวิงที่ใช้อ้างอิง: {fib["start_price"]:,.2f} → {fib["end_price"]:,.2f} '
+            f'({_zz_time(fib.get("start_time"))} → {_zz_time(fib.get("end_time"))})</div>'
+        )
+    else:
+        rows_html += (
+            f'<div style="padding:7px 10px;border-bottom:1px solid rgba(148,163,184,0.15);'
+            f'color:#64748b;">📐 <b>Fib ย่อ:</b> <span style="color:#94a3b8;">ยังไม่มีขาสวิงที่ตรงเทรนให้อ้างอิง</span></div>'
+        )
+
+    # OBV
+    obv_type = rev.get("obv_type")
+    if obv_type == "BULLISH":
+        obv_html = (
+            f'<span style="color:#10b981;">🟢 OBV Divergence ขาขึ้น — แรงขายหมด</span>'
+        )
+        obv_note = f'<span style="color:#94a3b8;font-size:0.8rem;">{rev.get("obv_note", "")}</span>'
+    elif obv_type == "BEARISH":
+        obv_html = (
+            f'<span style="color:#ef4444;">🔴 OBV Divergence ขาลง — แรงซื้อหมด</span>'
+        )
+        obv_note = f'<span style="color:#94a3b8;font-size:0.8rem;">{rev.get("obv_note", "")}</span>'
+    else:
+        obv_html = (
+            f'<span style="color:#94a3b8;">⚪ OBV: ยังไม่มี Divergence ที่ชัดเจน</span>'
+        )
+        obv_note = '<span style="color:#94a3b8;font-size:0.8rem;">ตามแรงซื้อ/ขายสะสมปกติ</span>'
+    rows_html += (
+        f'<div style="display:flex;flex-direction:column;gap:2px;'
+        f'padding:7px 10px;border-bottom:1px solid rgba(148,163,184,0.15);">{obv_html}{obv_note}</div>'
+    )
+
+    # แท่งกลับตัวล่าสุด
+    pat = rev.get("last_pattern")
+    if pat:
+        pat_side = pat.get("side")
+        pat_col = "#10b981" if pat_side == "BUY" else "#ef4444"
+        pat_emoji = "🟢" if pat_side == "BUY" else "🔴"
+        pat_note = pat.get("note", "")
+        in_zone_tag = (
+            '<span style="color:#22c55e;">ที่โซนย่อ ✓</span>'
+            if pat.get("in_zone") else
+            '<span style="color:#f59e0b;">นอกโซนย่อ</span>'
+        )
+        rows_html += (
+            f'<div style="display:flex;flex-direction:column;gap:2px;'
+            f'padding:7px 10px;border-bottom:1px solid rgba(148,163,184,0.15);">'
+            f'<span style="color:{pat_col};">{pat_emoji} แท่งกลับตัวพบ: '
+            f'<b>{pat.get("kind", "")}</b> · {in_zone_tag} '
+            f'<span style="color:#64748b;">({_zz_time(pat.get("time"))})</span></span>'
+            f'<span style="color:#94a3b8;font-size:0.8rem;">{pat_note}</span>'
+            f'</div>'
+        )
+    else:
+        rows_html += (
+            f'<div style="padding:7px 10px;border-bottom:1px solid rgba(148,163,184,0.15);'
+            f'color:#64748b;">🕯️ <b>แท่งกลับตัว:</b> '
+            f'<span style="color:#94a3b8;">ยังไม่มี Pin Bar / Engulfing ใน 10 แท่งสุดท้าย</span></div>'
+        )
+
+    # MACD
+    macd_txt = rev.get("macd_state", "ข้อมูลไม่พอ")
+    macd_col = rev.get("macd_color", "#94a3b8")
+    cross_txt = rev.get("macd_cross_txt", "")
+    rows_html += (
+        f'<div style="display:flex;flex-direction:column;gap:2px;'
+        f'padding:7px 10px;border-bottom:1px solid rgba(148,163,184,0.15);">'
+        f'<span style="color:{macd_col};">📊 <b>MACD:</b> {macd_txt}</span>'
+        f'{cross_txt and f"<span style=color:#94a3b8;font-size:0.8rem;>{cross_txt}</span>" or ""}'
+        f'</div>'
+    )
+
+    # VWAP
+    vwap = rev.get("vwap")
+    if vwap:
+        side = "เหนือ VWAP (มุมขาขึ้น)" if close >= vwap else "ใต้ VWAP (มุมขาลง)"
+        col = "#10b981" if close >= vwap else "#ef4444"
+        rows_html += (
+            f'<div style="display:flex;justify-content:space-between;gap:10px;'
+            f'padding:7px 10px;border-bottom:1px solid rgba(148,163,184,0.15);">'
+            f'<span style="color:#64748b;">🏛️ <b>VWAP:</b></span>'
+            f'<span style="color:{col};">{vwap:,.2f} — {side}</span>'
+            f'</div>'
+        )
+    else:
+        rows_html += (
+            f'<div style="padding:7px 10px;border-bottom:1px solid rgba(148,163,184,0.15);'
+            f'color:#64748b;">🏛️ <b>VWAP:</b> <span style="color:#94a3b8;">ข้อมูลไม่พอ</span></div>'
+        )
+
+    # หัวข้อ + verdict
+    return (
+        f'<div style="background:rgba(15,23,42,0.8);border:1px solid rgba(99,102,241,0.4);'
+        f'border-radius:12px;padding:12px 18px;margin:12px 0 6px 0;">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'
+        f'<span style="font-weight:700;color:#e2e8f0;font-size:1rem;">🎯 จุดกลับตัวตามเทรน '
+        f'<span style="color:{trend_color};">({trend_label})</span></span>'
+        f'<span style="background:{verdict_color};color:#0b0e14;border-radius:8px;'
+        f'padding:4px 12px;font-weight:700;font-size:0.85rem;">{verdict}</span>'
+        f'</div>'
+        f'{rows_html}'
+        f'<div style="margin-top:6px;color:#64748b;font-size:0.78rem;">'
+        f'*อ้างอิง OANDA tick volume ขนาด {timeframe_str} — เข้าตามเทรนเมื่อราคาย่อเข้าโซน + มีแรง'
+        f'และแท่งยืนยันครบ</div>'
+        f'</div>'
+    )
+
+
+def _compute_reversal_setup(df, zz: Optional[dict], ms: dict, close: Optional[float],
+                            atr: Optional[float]) -> dict:
+    """
+    รวมข้อมูลจับ 'จุดกลับตัวตามเทรน': Fib + OBV Divergence + แท่งกลับตัว + MACD + VWAP
+    พร้อมสรุป verdict ว่าพร้อมเข้าตามเทรนหรือยัง
+    """
+    res: dict = {}
+    if df is None or len(df) == 0:
+        return res
+    pts = []
+    if zz and isinstance(zz, dict):
+        pts = zz.get("points") or []
+    trend = (ms or {}).get("trend", "UNKNOWN")
+    res.update({
+        "trend": trend,
+        "trend_label": (ms or {}).get("label", "โครงสร้างไม่ชัด"),
+        "trend_color": (ms or {}).get("color", "#94a3b8"),
+        "atr": atr,
+    })
+    if close is None:
+        try:
+            close = float(df["close"].iloc[-1])
+        except Exception:
+            close = None
+    res["close"] = close
+
+    try:
+        res["fib"] = _zigzag_fib(pts, ms)
+    except Exception:
+        res["fib"] = None
+    fib = res["fib"]
+
+    obv_div, macd, pats, vwap = {}, {}, [], None
+    try:
+        obv_div = indicator_service.compute_obv_divergence(df)
+    except Exception as _e:
+        logger.warning(f"คำนวณ OBV ไม่สำเร็จ: {_e}")
+    try:
+        macd = indicator_service.compute_macd(df)
+    except Exception as _e:
+        logger.warning(f"คำนวณ MACD ไม่สำเร็จ: {_e}")
+    try:
+        pats = indicator_service.detect_candle_patterns(df)
+    except Exception as _e:
+        logger.warning(f"ค้นหาแท่งกลับตัวไม่สำเร็จ: {_e}")
+    try:
+        vwap = indicator_service.compute_vwap(df)
+    except Exception as _e:
+        logger.warning(f"คำนวณ VWAP ไม่สำเร็จ: {_e}")
+
+    res["obv_type"] = obv_div.get("type") if isinstance(obv_div, dict) else None
+    res["obv_note"] = obv_div.get("note") if isinstance(obv_div, dict) else ""
+    res["macd_state"] = macd.get("state", "ข้อมูลไม่พอ") if isinstance(macd, dict) else "ข้อมูลไม่พอ"
+    res["macd_color"] = macd.get("color", "#94a3b8") if isinstance(macd, dict) else "#94a3b8"
+    _cross = macd.get("cross") if isinstance(macd, dict) else None
+    _cb = macd.get("cross_bars") if isinstance(macd, dict) else None
+    if _cross == "GOLDEN":
+        res["macd_cross_txt"] = f"Golden Cross ล่าสุดเมื่อ {_cb} แท่งก่อน จากนั้นโมเมนตัมไปทางซื้อ"
+    elif _cross == "DEATH":
+        res["macd_cross_txt"] = f"Death Cross ล่าสุดเมื่อ {_cb} แท่งก่อน จากนั้นโมเมนตัมไปทางขาย"
+    else:
+        res["macd_cross_txt"] = ""
+    res["vwap"] = vwap
+    res["last_pattern"] = pats[-1] if pats else None
+
+    # ประเมินราคาเทียบโซนย่อ Fib
+    zone_ok = zone_near = False
+    if fib and close is not None:
+        buff = max((atr or 0.0), 0.0) * 0.35
+        zone_ok = fib["zone_low"] <= close <= fib["zone_high"]
+        zone_near = (fib["zone_low"] - buff) <= close <= (fib["zone_high"] + buff)
+    res["zone_ok"] = zone_ok
+    res["zone_near"] = zone_near
+    if res.get("last_pattern") and zone_near and (fib or not fib):
+        res["last_pattern"]["in_zone"] = zone_near
+
+    # ✓ เช็คชุดเงื่อนไขตามเทรน
+    checks_ok, checks_bad = [], []
+    up = trend == "UP"
+    down = trend == "DOWN"
+    if up:
+        if zone_ok:
+            checks_ok.append("ราคาอยู่ในโซนย่อ FIB 0.5–0.618")
+        elif zone_near:
+            checks_ok.append("ราคาใกล้โซนย่อ ใช้ ATR เรียกหาแนว")
+        else:
+            checks_bad.append("ราคายังไม่ย่อเข้าโซน")
+        if res["obv_type"] == "BULLISH":
+            checks_ok.append("OBV Divergence ขาขึ้น (แรงขายหมด)")
+        if res["obv_type"] == "BEARISH":
+            checks_bad.append("OBV Divergence ขาลง (สวนเทรน)")
+        if res.get("last_pattern") and res["last_pattern"].get("side") == "BUY":
+            checks_ok.append(f"แท่งยืนยัน {res['last_pattern']['kind']}")
+        if res.get("last_pattern") and res["last_pattern"].get("side") == "SELL":
+            checks_bad.append("แท่งกลับตัวฝั่งขายในเทรนขึ้น")
+        if vwap is not None and close >= vwap:
+            checks_ok.append("ราคาอยู่เหนือ VWAP")
+        elif vwap is not None:
+            checks_bad.append("ราคาอยู่ใต้ VWAP สวนมุม")
+        if _cross == "DEATH":
+            checks_bad.append("MACD เพิ่ง Death Cross")
+    elif down:
+        if zone_ok:
+            checks_ok.append("ราคาอยู่ในโซนย่อ FIB 0.5–0.618")
+        elif zone_near:
+            checks_ok.append("ราคาใกล้โซนย่อ ใช้ ATR เรียกหาแนว")
+        else:
+            checks_bad.append("ราคายังไม่ย่อเข้าโซน")
+        if res["obv_type"] == "BEARISH":
+            checks_ok.append("OBV Divergence ขาลง (แรงซื้อหมด)")
+        if res["obv_type"] == "BULLISH":
+            checks_bad.append("OBV Divergence ขาขึ้น (สวนเทรน)")
+        if res.get("last_pattern") and res["last_pattern"].get("side") == "SELL":
+            checks_ok.append(f"แท่งยืนยัน {res['last_pattern']['kind']}")
+        if res.get("last_pattern") and res["last_pattern"].get("side") == "BUY":
+            checks_bad.append("แท่งกลับตัวฝั่งซื้อในเทรนลง")
+        if vwap is not None and close <= vwap:
+            checks_ok.append("ราคาอยู่ใต้ VWAP")
+        elif vwap is not None:
+            checks_bad.append("ราคาอยู่เหนือ VWAP สวนมุม")
+        if _cross == "GOLDEN":
+            checks_bad.append("MACD เพิ่ง Golden Cross สวนเทรน")
+    res["checks_ok"] = checks_ok
+    res["checks_bad"] = checks_bad
+
+    if up or down:
+        if len(checks_ok) >= 3 and not checks_bad:
+            res["verdict"] = "🔔 เข้าตามเทรนได้ (Pullback)"
+            res["verdict_color"] = "#22c55e"
+        elif len(checks_ok) >= 2 and len(checks_bad) <= 1:
+            res["verdict"] = "⏳ ใกล้ครบ ยังรอ"
+            res["verdict_color"] = "#fbbf24"
+        else:
+            res["verdict"] = "🚫 ยังไม่ถึงจุดกลับตัว"
+            res["verdict_color"] = "#ef4444"
+    else:
+        res["verdict"] = "⛔ เทรนไม่ชัด — รอโครงสร้าง"
+        res["verdict_color"] = "#94a3b8"
+    return res
+
+
 def _zigzag_panel_html(zz: dict, ms: dict, atr: Optional[float] = None, timeframe_str: str = "") -> str:
     """
     แผง ZigZag (Depth 12 / Deviation 5 / Backstep 3) + แผนเข้าตามเทรนแบบย่อ (Pullback)
@@ -2862,6 +3199,86 @@ if df_ema_full is not None and len(df_ema_full) > 0:
             except Exception:
                 zigzag_data = None
 
+        # 🎯 จุดกลับตัวตามเทรน: Fib retracement + VWAP + แท่งกลับตัว (Pin Bar/Engulfing)
+        try:
+            _rev_ms = compute_market_structure(df_ema_full)
+            rev_data = _compute_reversal_setup(
+                df_ema_full,
+                zigzag_data,
+                _rev_ms,
+                float(df_ema_full["close"].iloc[-1]),
+                atr_value,
+            )
+            st.session_state["rev_setup_data"] = rev_data
+            _fib_r = rev_data.get("fib") if isinstance(rev_data, dict) else None
+            if _fib_r:
+                fig_chart.add_hrect(
+                    y0=_fib_r["zone_low"],
+                    y1=_fib_r["zone_high"],
+                    fillcolor="rgba(250,204,21,0.07)",
+                    line_width=0,
+                    annotation_text="🎯 โซนย่อ Fib 0.5–0.618",
+                    annotation_position="top left",
+                    annotation_font_size=10,
+                    annotation_font_color="#fde047",
+                    row=1,
+                    col=1,
+                )
+                for _r in (0.382, 0.5, 0.618, 0.786):
+                    _lv = _fib_r.get("levels", {}).get(_r)
+                    if _lv is None:
+                        continue
+                    fig_chart.add_hline(
+                        y=_lv,
+                        line_dash="dash",
+                        line_width=1.0,
+                        line_color="rgba(56,189,248,0.55)",
+                        row=1,
+                        col=1,
+                        annotation_text=f"{_r*100:.0f}%",
+                        annotation_position="right",
+                        annotation_font_size=9,
+                        annotation_font_color="rgba(56,189,248,0.75)",
+                    )
+            _vw = rev_data.get("vwap") if isinstance(rev_data, dict) else None
+            if _vw is not None:
+                fig_chart.add_hline(
+                    y=_vw,
+                    line_dash="solid",
+                    line_width=1.2,
+                    line_color="rgba(217,70,239,0.85)",
+                    row=1,
+                    col=1,
+                    annotation_text=f"VWAP {_vw:,.2f}",
+                    annotation_position="top right",
+                    annotation_font_size=9,
+                    annotation_font_color="rgba(217,70,239,0.9)",
+                )
+            if isinstance(rev_data, dict) and rev_data.get("last_pattern"):
+                _p = rev_data["last_pattern"]
+                if _p and _p.get("time") is not None and _p["time"] >= df_plot["time"].iloc[0]:
+                    fig_chart.add_trace(
+                        go.Scatter(
+                            x=[_p["time"]],
+                            y=[_p["price"]],
+                            mode="markers",
+                            marker=dict(
+                                symbol="triangle-up" if _p.get("side") == "BUY" else "triangle-down",
+                                size=13,
+                                color="#22c55e" if _p.get("side") == "BUY" else "#ef4444",
+                                line=dict(color="#0b0e14", width=1),
+                            ),
+                            name="แท่งกลับตัว",
+                            text=[_p.get("kind", "")],
+                            textposition="top center",
+                            hoverinfo="text+x",
+                        ),
+                        row=1,
+                        col=1,
+                    )
+        except Exception as _rev_err:
+            logger.warning(f"วาด Fib/VWAP/แท่งกลับตัวไม่สำเร็จ: {_rev_err}")
+
         # ปริมาณ Volume ด้านล่าง
         fig_chart.add_trace(
             go.Bar(
@@ -2992,6 +3409,15 @@ if "mtf_results" in locals():
             )
         except Exception as _e:
             logger.warning(f"แผง ZigZag แสดงไม่ได้: {_e}")
+        # 🎯 จุดกลับตัวตามเทรน — Fib + OBV Divergence + แท่งกลับตัว + MACD + VWAP
+        try:
+            _rev = st.session_state.get("rev_setup_data")
+            if not _rev:
+                _rev = _compute_reversal_setup(_df_now, _zz, _ms_zz, None, _atrv)
+            if _rev:
+                st.markdown(_reversal_panel_html(_rev, selected_tf), unsafe_allow_html=True)
+        except Exception as _e:
+            logger.warning(f"แผงจุดกลับตัวตามเทรนแสดงไม่ได้: {_e}")
 
     # 🌡️ เกจวัดความผันผวน (ATR ปัจจุบัน vs เฉลี่ยระยะยาว) — แสดงเสมอเมื่อมีข้อมูล
     if _atrv:
