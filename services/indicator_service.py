@@ -561,8 +561,15 @@ class IndicatorService:
         try:
             closes = [float(c) for c in df["close"].tolist()]
         except Exception:
-            return empty
-        if len(closes) < slow:
+            closes = []
+        if len(closes) < slow + signal:
+            # พยายามแปลงตัวเลขจากดิบเผื่อคอลัมน์ติด NaN/ข้อความ
+            try:
+                num = pd.to_numeric(pd.Series(df["close"]), errors="coerce").dropna()
+                closes = [float(x) for x in num.tolist()]
+            except Exception:
+                closes = []
+        if len(closes) < slow + signal:
             return empty
 
         s = pd.Series(closes)
@@ -657,7 +664,11 @@ class IndicatorService:
         return out
 
     def compute_vwap(self, df: pd.DataFrame) -> Optional[float]:
-        """คำนวณ VWAP (Typical Price ถ่วงน้ำหนัก tick_volume; ถ้าไม่มี volume ใช้ 1)"""
+        """
+        คำนวณ VWAP (Typical Price ถ่วงน้ำหนัก tick_volume)
+        ถ้า volume เป็น 0 / ไม่มี (เช่นคู่เงินที่ Yahoo คืน volume 0)
+        จะสลับเป็น equal-weight (ค่าเฉลี่ย Typical Price) เพื่อให้ใช้ได้จริงเสมอ
+        """
         if df is None or len(df) == 0:
             return None
         try:
@@ -666,16 +677,22 @@ class IndicatorService:
             closes = [float(x) for x in df["close"].tolist()]
         except Exception:
             return None
+        vols = None
         try:
-            vols = [float(v) for v in df["tick_volume"].tolist()]
+            vols = [0.0 if v != v else float(v) for v in df["tick_volume"].tolist()]
         except Exception:
-            vols = [1.0] * len(closes)
+            vols = None
         tp_vol = 0.0
         vol_sum = 0.0
-        for h, l, c, v in zip(highs, lows, closes, vols):
-            tp_vol += ((h + l + c) / 3.0) * v
+        n = len(closes)
+        for i, (h, l, c) in enumerate(zip(highs, lows, closes)):
+            tp = (h + l + c) / 3.0
+            v = (vols[i] if (vols is not None and i < len(vols)) else 1.0)
+            tp_vol += tp * v
             vol_sum += v
-        return (tp_vol / vol_sum) if vol_sum > 0 else None
+        if vol_sum <= 0:
+            return sum((h + l + c) / 3.0 for h, l, c in zip(highs, lows, closes)) / max(n, 1)
+        return tp_vol / vol_sum
 
     # ------------------------------------------------------------------
     def _advance_last_cross(self, state_key: str, record, new_time, new_signal) -> Optional[dict]:

@@ -1681,6 +1681,7 @@ def _reversal_panel_html(rev: dict, timeframe_str: str = "") -> str:
     fib = rev.get("fib")
     close = rev.get("close")
     atr = rev.get("atr")
+    vwap_note = rev.get("vwap_note", "")
 
     rows_html = ""
 
@@ -1786,10 +1787,13 @@ def _reversal_panel_html(rev: dict, timeframe_str: str = "") -> str:
         side = "เหนือ VWAP (มุมขาขึ้น)" if close >= vwap else "ใต้ VWAP (มุมขาลง)"
         col = "#10b981" if close >= vwap else "#ef4444"
         rows_html += (
-            f'<div style="display:flex;justify-content:space-between;gap:10px;'
+            f'<div style="display:flex;flex-direction:column;gap:2px;'
             f'padding:7px 10px;border-bottom:1px solid rgba(148,163,184,0.15);">'
+            f'<div style="display:flex;justify-content:space-between;gap:10px;">'
             f'<span style="color:#64748b;">🏛️ <b>VWAP:</b></span>'
             f'<span style="color:{col};">{vwap:,.2f} — {side}</span>'
+            f'</div>'
+            f'{vwap_note and f"<span style=color:#94a3b8;font-size:0.8rem;>*{vwap_note}</span>" or ""}'
             f'</div>'
         )
     else:
@@ -1810,10 +1814,52 @@ def _reversal_panel_html(rev: dict, timeframe_str: str = "") -> str:
         f'</div>'
         f'{rows_html}'
         f'<div style="margin-top:6px;color:#64748b;font-size:0.78rem;">'
+        f'{"" if rev.get("ms_clear", True) else "<b style=color:#fbbf24;>⚠️ โครงสร้างราคายังไม่ยืนยันทิศทาง</b> — ทิศที่ใช้วิเคราะห์มาจาก ZigZag/EMA ควรตัดสินแบบระวัง<br/>"}'
         f'*อ้างอิง OANDA tick volume ขนาด {timeframe_str} — เข้าตามเทรนเมื่อราคาย่อเข้าโซน + มีแรง'
         f'และแท่งยืนยันครบ</div>'
         f'</div>'
     )
+
+
+def _resolve_trend(ms: dict, zz: Optional[dict], df) -> tuple:
+    """
+    หาทิศทางที่ใช้วิเคราะห์ 'จุดกลับตัวตามเทรน'
+    ลำดับความเชื่อถือ: โครงสร้างราคา (MS) > สวิง ZigZag > EMA 50/150
+    :return (trend, label, color, ms_clear)
+      - ms_clear = True ถ้าโครงสร้างราคายืนยันทิศได้ชัดเจน
+    """
+    trend = (ms or {}).get("trend", "UNKNOWN")
+    ms_clear = trend in ("UP", "DOWN")
+    if ms_clear:
+        return trend, (ms or {}).get("label", "โครงสร้างชัดเจน"), (ms or {}).get("color", "#94a3b8"), True
+
+    direction = None
+    basis = ""
+    pts = []
+    if zz and isinstance(zz, dict):
+        pts = zz.get("points") or []
+    if len(pts) >= 2:
+        a, b = pts[-2], pts[-1]
+        if a.get("kind") == "L" and b.get("kind") == "H":
+            direction, basis = "UP", "จากสวิง ZigZag"
+        elif a.get("kind") == "H" and b.get("kind") == "L":
+            direction, basis = "DOWN", "จากสวิง ZigZag"
+    if direction is None or df is None:
+        try:
+            f = float(df["ema_fast"].iloc[-1])
+            s = float(df["ema_slow"].iloc[-1])
+            direction = "UP" if f > s else "DOWN"
+            basis = "จาก EMA 50/150"
+        except Exception:
+            direction, basis = None, ""
+    if direction is None:
+        return "UNKNOWN", "โครงสร้างไม่ชัด", "#94a3b8", False
+    label = (
+        f"แนวโน้มขึ้น {basis} (รอ MS ยืนยัน)" if direction == "UP"
+        else f"แนวโน้มลง {basis} (รอ MS ยืนยัน)"
+    )
+    color = "#f59e0b"
+    return direction, label, color, False
 
 
 def _compute_reversal_setup(df, zz: Optional[dict], ms: dict, close: Optional[float],
@@ -1828,11 +1874,14 @@ def _compute_reversal_setup(df, zz: Optional[dict], ms: dict, close: Optional[fl
     pts = []
     if zz and isinstance(zz, dict):
         pts = zz.get("points") or []
-    trend = (ms or {}).get("trend", "UNKNOWN")
+    ms_trend = (ms or {}).get("trend", "UNKNOWN")
+    trend, _label, _color, ms_clear = _resolve_trend(ms, zz, df)
     res.update({
         "trend": trend,
-        "trend_label": (ms or {}).get("label", "โครงสร้างไม่ชัด"),
-        "trend_color": (ms or {}).get("color", "#94a3b8"),
+        "trend_label": _label,
+        "trend_color": _color,
+        "ms_clear": ms_clear,
+        "ms_trend": ms_trend,
         "atr": atr,
     })
     if close is None:
@@ -1843,7 +1892,7 @@ def _compute_reversal_setup(df, zz: Optional[dict], ms: dict, close: Optional[fl
     res["close"] = close
 
     try:
-        res["fib"] = _zigzag_fib(pts, ms)
+        res["fib"] = _zigzag_fib(pts, {"trend": trend})
     except Exception:
         res["fib"] = None
     fib = res["fib"]
@@ -1865,6 +1914,14 @@ def _compute_reversal_setup(df, zz: Optional[dict], ms: dict, close: Optional[fl
         vwap = indicator_service.compute_vwap(df)
     except Exception as _e:
         logger.warning(f"คำนวณ VWAP ไม่สำเร็จ: {_e}")
+    res["vwap_note"] = ""
+    if vwap is not None:
+        try:
+            _vols = df["tick_volume"].tolist()
+            if _vols and sum(float(v) if v == v else 0.0 for v in _vols) <= 0:
+                res["vwap_note"] = " (equal-weight — แหล่งข้อมูลไม่มี tick volume)"
+        except Exception:
+            pass
 
     res["obv_type"] = obv_div.get("type") if isinstance(obv_div, dict) else None
     res["obv_note"] = obv_div.get("note") if isinstance(obv_div, dict) else ""
@@ -1951,8 +2008,11 @@ def _compute_reversal_setup(df, zz: Optional[dict], ms: dict, close: Optional[fl
         else:
             res["verdict"] = "🚫 ยังไม่ถึงจุดกลับตัว"
             res["verdict_color"] = "#ef4444"
+        if not (res.get("ms_clear") or False):
+            res["verdict"] = "⏳ รอโครงสร้างยืนยันก่อน (ดูแนวที่แนะนำได้)"
+            res["verdict_color"] = "#fbbf24"
     else:
-        res["verdict"] = "⛔ เทรนไม่ชัด — รอโครงสร้าง"
+        res["verdict"] = "⛔ ข้อมูลยังไม่พอประเมินทิศทาง"
         res["verdict_color"] = "#94a3b8"
     return res
 
@@ -3210,6 +3270,7 @@ if df_ema_full is not None and len(df_ema_full) > 0:
                 atr_value,
             )
             st.session_state["rev_setup_data"] = rev_data
+            st.session_state["rev_setup_key"] = (selected_symbol, selected_tf)
             _fib_r = rev_data.get("fib") if isinstance(rev_data, dict) else None
             if _fib_r:
                 fig_chart.add_hrect(
@@ -3411,7 +3472,12 @@ if "mtf_results" in locals():
             logger.warning(f"แผง ZigZag แสดงไม่ได้: {_e}")
         # 🎯 จุดกลับตัวตามเทรน — Fib + OBV Divergence + แท่งกลับตัว + MACD + VWAP
         try:
-            _rev = st.session_state.get("rev_setup_data")
+            _rev_key = st.session_state.get("rev_setup_key")
+            _rev = (
+                st.session_state.get("rev_setup_data")
+                if _rev_key == (selected_symbol, selected_tf)
+                else None
+            )
             if not _rev:
                 _rev = _compute_reversal_setup(_df_now, _zz, _ms_zz, None, _atrv)
             if _rev:
