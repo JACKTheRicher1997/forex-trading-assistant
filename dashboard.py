@@ -2476,10 +2476,16 @@ if signal_result:
             row_cols = st.columns(len(row))
             for col, tf in zip(row_cols, row):
                 tf_trend, tf_color = mtf_results[tf]
+                _rv = mtf_rsi.get(tf)
 
                 with col:
                     # กล่องสรุปเทรนแบบกดได้: คลิกเพื่อสลับเลือกกรอบเวลา (Timeframe) ใน sidebar
-                    btn_label = f"{tf}\n{tf_trend}"
+                    # แสดงค่า RSI เป็นบรรทัดบนสุดของแต่ละ TF แล้วตามด้วยชื่อ TF + สถานะเทรน
+                    if _rv is not None:
+                        _zshort = _rsi_zone(_rv)[0].split(" (")[0]
+                        btn_label = f"RSI {float(_rv):.1f} · {_zshort}\n{tf}  {tf_trend}"
+                    else:
+                        btn_label = f"{tf}\n{tf_trend}"
                     # เน้นไทม์เฟรมที่กำลังเลือกอยู่
                     is_active = (tf == selected_tf)
                     # ใช้ on_click callback (รันก่อน widget instantiate) เพื่อไม่ให้ error
@@ -2509,16 +2515,6 @@ if signal_result:
                         """,
                         unsafe_allow_html=True,
                     )
-                    # ค่า RSI ของแต่ละกรอบเวลา (ตัวช่วยยืนยันที่สอง)
-                    _rv = mtf_rsi.get(tf)
-                    if _rv is not None:
-                        _z, _zc, _ztip = _rsi_zone(_rv)
-                        _zshort = _z.split(" (")[0]
-                        st.markdown(
-                            f'<div style="text-align:center;font-size:0.78rem;color:{_zc};'
-                            f'margin-top:2px;" title="{_ztip}">RSI {float(_rv):.1f} · {_zshort}</div>',
-                            unsafe_allow_html=True,
-                        )
 
         # แถวสรุป RSI ทุกกรอบเวลา
         _rsi_cells = [mtf_rsi.get(tf) for tf in mtf_tfs]
