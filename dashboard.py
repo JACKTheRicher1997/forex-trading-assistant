@@ -2815,41 +2815,52 @@ if df_ema_full is not None and len(df_ema_full) > 0:
             )
 
         # เส้น ZigZag (Depth 12 / Deviation 5 / Backstep 3) — เชื่อมจุดสวิงไฮ/สวิงโล
-        zigzag_data = indicator_service.compute_zigzag(
-            df_ema_full,
-            12,
-            5,
-            3,
-            point=_instrument_spec(selected_symbol).get("pip", 0.0),
-        )
-        _zz_pts = [
-            p
-            for p in zigzag_data.get("points", [])
-            if p.get("time") is not None and p["time"] >= df_plot["time"].iloc[0]
-        ]
-        if len(_zz_pts) >= 2:
-            fig_chart.add_trace(
-                go.Scatter(
-                    x=[p["time"] for p in _zz_pts],
-                    y=[p["price"] for p in _zz_pts],
-                    mode="lines+markers",
-                    line=dict(color="rgba(250,204,21,0.85)", width=1.6),
-                    marker=dict(
-                        size=8,
-                        color=["#ef4444" if p["kind"] == "H" else "#22c55e" for p in _zz_pts],
-                        line=dict(color="#0b0e14", width=1),
+        try:
+            _zz_calc = getattr(indicator_service, "compute_zigzag", None)
+            if _zz_calc is None:
+                zigzag_data = None
+            else:
+                zigzag_data = _zz_calc(
+                    df_ema_full,
+                    12,
+                    5,
+                    3,
+                    point=_instrument_spec(selected_symbol).get("pip", 0.0),
+                )
+            _zz_pts = [
+                p
+                for p in (zigzag_data or {}).get("points", [])
+                if p.get("time") is not None and p["time"] >= df_plot["time"].iloc[0]
+            ]
+            if len(_zz_pts) >= 2:
+                fig_chart.add_trace(
+                    go.Scatter(
+                        x=[p["time"] for p in _zz_pts],
+                        y=[p["price"] for p in _zz_pts],
+                        mode="lines+markers",
+                        line=dict(color="rgba(250,204,21,0.85)", width=1.6),
+                        marker=dict(
+                            size=8,
+                            color=["#ef4444" if p["kind"] == "H" else "#22c55e" for p in _zz_pts],
+                            line=dict(color="#0b0e14", width=1),
+                        ),
+                        name="ZigZag 12,5,3",
+                        hovertext=[
+                            ("Swing High " if p["kind"] == "H" else "Swing Low ")
+                            + f'{p["price"]:,.2f}'
+                            for p in _zz_pts
+                        ],
+                        hoverinfo="text+x",
                     ),
-                    name="ZigZag 12,5,3",
-                    hovertext=[
-                        ("Swing High " if p["kind"] == "H" else "Swing Low ")
-                        + f'{p["price"]:,.2f}'
-                        for p in _zz_pts
-                    ],
-                    hoverinfo="text+x",
-                ),
-                row=1,
-                col=1,
-            )
+                    row=1,
+                    col=1,
+                )
+        except Exception as _zz_err:
+            logger.exception(f"วาดเส้น ZigZag ไม่สำเร็จ: {_zz_err}")
+            try:
+                zigzag_data = locals().get("zigzag_data")
+            except Exception:
+                zigzag_data = None
 
         # ปริมาณ Volume ด้านล่าง
         fig_chart.add_trace(
@@ -2969,8 +2980,10 @@ if "mtf_results" in locals():
             logger.warning(f"แผงโครงสร้างราคาแสดงไม่ได้: {_e}")
         # 🧩 ZigZag 12,5,3 + แผนย่อเข้าตามเทรน — ใช้สวิงไฮ/โลจริงยืนยันจุดเข้า
         try:
-            _zz = locals().get("zigzag_data") or indicator_service.compute_zigzag(
-                _df_now, 12, 5, 3, point=_instrument_spec(selected_symbol).get("pip", 0.0)
+            _zz_calc = getattr(indicator_service, "compute_zigzag", None)
+            _zz = locals().get("zigzag_data") or (
+                _zz_calc(_df_now, 12, 5, 3, point=_instrument_spec(selected_symbol).get("pip", 0.0))
+                if _zz_calc is not None else None
             )
             _ms_zz = locals().get("_ms") or compute_market_structure(_df_now)
             st.markdown(
