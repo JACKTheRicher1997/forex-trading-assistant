@@ -2160,7 +2160,7 @@ def _sessions_html(info: dict) -> str:
             )
         else:
             st_txt = (
-                f'<span style="color:#64748b;">○ เปิดใน '
+                f'<span style="color:#94a3b8;">○ เปิดใน '
                 f'{_fmt_hhmm_countdown(s["secs_to_open"])}</span>'
             )
         seg_html = ""
@@ -2174,7 +2174,7 @@ def _sessions_html(info: dict) -> str:
         rows += (
             f'<div style="margin:8px 0;">'
             f'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;'
-            f'font-size:0.9rem;color:#cbd5e1;margin-bottom:4px;">'
+            f'font-size:1.05rem;font-weight:600;color:#e2e8f0;margin-bottom:4px;">'
             f'<span>{s["name"]} · {time_range}</span>{st_txt}</div>'
             f'<div style="position:relative;height:10px;background:rgba(255,255,255,0.08);border-radius:5px;'
             f'overflow:hidden;">'
@@ -2222,7 +2222,7 @@ def _sessions_html(info: dict) -> str:
                 if next_ov is None or secs_to < next_ov[0]:
                     next_ov = (secs_to, o)
                 detail.append(
-                    f'<span style="color:#94a3b8;">○ {o["label"]} '
+                    f'<span style="color:#cbd5e1;">○ {o["label"]} '
                     f'{_hhmm(o["start"])}–{_hhmm(o["end"])} เริ่มใน {_fmt_hhmm_countdown(secs_to)}</span>'
                 )
         if not active_ov and next_ov is not None:
@@ -2232,12 +2232,12 @@ def _sessions_html(info: dict) -> str:
             )
         overlap_rows = (
             f'<div style="margin:12px 0 4px 0;">'
-            f'<div style="font-size:0.9rem;color:#cbd5e1;margin-bottom:4px;">'
+            f'<div style="font-size:1.05rem;font-weight:600;color:#e2e8f0;margin-bottom:4px;">'
             f'🔥 <b>Overlap</b> (ตลาดเปิดทับกัน 2 แห่ง — ปริมาณหนาแน่นสูงสุด)</div>'
             f'<div style="position:relative;height:10px;background:rgba(255,255,255,0.08);'
             f'border-radius:5px;overflow:hidden;">{seg_html}</div>'
-            f'<div style="display:flex;flex-direction:column;gap:2px;margin-top:6px;'
-            f'font-size:0.85rem;">{"".join(detail)}</div>'
+            f'<div style="display:flex;flex-direction:column;gap:4px;margin-top:6px;'
+            f'font-size:1rem;">{"".join(detail)}</div>'
             f'</div>'
         )
 
@@ -2261,10 +2261,10 @@ def _sessions_html(info: dict) -> str:
         f'🕐 ช่วงเวลาเทรดที่ดีที่สุด (Trading Sessions) · '
         f'<span style="color:#fbbf24;">{info["now"].strftime("%H:%M น.")}</span></div>'
         f'{banner}{rows}{overlap_rows}'
-        f'<div style="margin-top:12px;padding:10px 14px;border-left:3px solid #fbbf24;'
-        f'background:rgba(251,191,36,0.1);border-radius:6px;color:#fde68a;font-size:0.93rem;">'
+        f'<div style="margin-top:12px;padding:12px 16px;border-left:3px solid #fbbf24;'
+        f'background:rgba(251,191,36,0.1);border-radius:6px;color:#fde68a;font-size:1.05rem;line-height:1.5;">'
         f'{_gold_note}</div>'
-        f'<div style="margin-top:8px;color:#64748b;font-size:0.78rem;">'
+        f'<div style="margin-top:8px;color:#94a3b8;font-size:0.9rem;line-height:1.5;">'
         f'*เวลาคำนวณอัตโนมัติตาม DST ของแต่ละตลาด (ระบุชื่อเขตเวลากำกับ) '
         f'และเทียบเป็นเวลาไทย (ICT UTC+7)</div>'
         f'</div>'
