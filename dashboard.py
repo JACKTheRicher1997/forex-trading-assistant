@@ -814,66 +814,6 @@ def compute_support_resistance(df, swing_window: int = 40) -> dict:
     return out
 
 
-def _sr_box_html(l: dict, is_support: bool, is_nearest: bool, is_price: bool = False) -> str:
-    """กล่องเล็กแสดงระดับ S/R หรือราคาปัจจุบัน"""
-    border = "#f87171" if is_support else "#34d399"
-    text = "#fecaca" if is_support else "#a7f3d0"
-    if is_price:
-        border, text = "#fbbf24", "#fde68a"
-    ring = "box-shadow:0 0 0 2px rgba(251,191,36,0.55);" if is_nearest else ""
-    if is_price:
-        inner = (
-            f'<div style="font-size:0.7rem;color:#94a3b8;">ราคาปัจจุบัน</div>'
-            f'<div style="font-size:1.15rem;font-weight:800;color:#f8fafc;">${l["price"]:,.2f}</div>'
-        )
-    else:
-        arrow = "↑" if not is_support else "↓"
-        inner = (
-            f'<div style="font-size:0.7rem;color:#94a3b8;">{arrow} {l["label"]} · {l["pct"]:.2f}%</div>'
-            f'<div style="font-size:1.15rem;font-weight:800;color:{text};">${l["price"]:,.2f}</div>'
-        )
-    return (
-        f'<div style="flex:1 1 120px;min-width:120px;background:rgba(15,23,42,0.85);'
-        f'border:1px solid {border};border-radius:10px;padding:8px 10px;text-align:center;{ring}">{inner}</div>'
-    )
-
-
-def _sr_panel_html(sr: dict) -> str:
-    """สร้าง HTML แผงแนวรับ/แนวต้านอัตโนมัติแบบบันได (R3...S3)"""
-    C = sr["current_close"]
-    resistances = sorted([l for l in sr["levels"] if l["side"] == "R"], key=lambda l: l["price"])[:3][::-1]
-    supports = sorted([l for l in sr["levels"] if l["side"] == "S"], key=lambda l: l["price"], reverse=True)[:3]
-    nr = sr["nearest_resistance"]
-    ns = sr["nearest_support"]
-
-    cells = "".join(
-        _sr_box_html(l, False, bool(nr and l["price"] == nr["price"])) for l in resistances
-    )
-    cells += _sr_box_html({"price": C}, False, False, is_price=True)
-    cells += "".join(
-        _sr_box_html(l, True, bool(ns and l["price"] == ns["price"])) for l in supports
-    )
-
-    tip = ""
-    if nr and ns:
-        tip = (
-            f'<div style="margin-top:8px;color:#cbd5e1;font-size:0.9rem;">'
-            f'• ใกล้แนวต้าน <b style="color:#f87171;">{nr["label"]} ${nr["price"]:,.2f}</b> อยู่ห่าง {nr["pct"]:.2f}%<br/>'
-            f'• ใกล้แนวรับ <b style="color:#34d399;">{ns["label"]} ${ns["price"]:,.2f}</b> อยู่ห่าง {ns["pct"]:.2f}%'
-            f'</div>'
-        )
-    return (
-        f'<div style="background:rgba(15,23,42,0.9);border:1px solid rgba(255,255,255,0.08);'
-        f'border-radius:14px;padding:16px 20px;margin:12px 0 6px 0;">'
-        f'<div style="font-size:1.15rem;font-weight:800;color:#f8fafc;margin-bottom:10px;">'
-        f'📏 แนวรับ / แนวต้านอัตโนมัติ (Support & Resistance)</div>'
-        f'<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;">{cells}</div>'
-        f'{tip}'
-        f'<div style="margin-top:8px;color:#64748b;font-size:0.8rem;">อ้างอิง: Pivot Point Classic + Swing High/Low 40 แท่งล่าสุด + ระดับเลขกลม</div>'
-        f'</div>'
-    )
-
-
 def compute_atr(df, period: int = 14) -> Optional[float]:
     """
     คำนวณ Average True Range (ATR) แบบ Wilder Smoothing
@@ -3141,10 +3081,6 @@ if "mtf_results" in locals():
         unsafe_allow_html=True,
     )
 
-    # 📏 แนวรับ/แนวต้านอัตโนมัติ — แสดงต่อจาก Verdict (ใช้ sr_info จากกราฟ Section 6)
-    if "sr_info" in locals() and sr_info and sr_info["levels"]:
-        st.markdown(_sr_panel_html(sr_info), unsafe_allow_html=True)
-
     # 📊 RSI(14) + Divergence — ตัวช่วยยืนยันที่สอง
     _atrv = locals().get("atr_value") if "atr_value" in locals() else None
     _df_now = locals().get("df_ema_full")
@@ -3210,7 +3146,7 @@ if "mtf_results" in locals():
 
     # 🎯 แจ้งเตือนราคาตามที่ผู้ใช้ตั้ง — ตรวจและส่ง LINE อัตโนมัติ (ยิงครั้งเดียวต่อเป้าหมาย)
     try:
-        _cur_px = sr_info.get("current_close") if sr_info else None
+        _cur_px = sr_info.get("current_close") if "sr_info" in locals() and sr_info else None
         _fired_alert = check_price_alert(
             selected_symbol, selected_tf, df=locals().get("df_ema_full"), close_price=_cur_px
         )
