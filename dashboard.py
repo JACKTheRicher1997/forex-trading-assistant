@@ -1399,18 +1399,18 @@ def _reversal_panel_html(rev: dict, timeframe_str: str = "") -> str:
         rows_html += (
             f'<div style="display:flex;justify-content:space-between;align-items:center;'
             f'padding:7px 10px;border-bottom:1px solid rgba(148,163,184,0.15);gap:10px;">'
-            f'<span style="color:#64748b;">📐 <b>Fib ย่อ {fib["direction"]}</b> '
-            f'<span style="color:#475569;">(50.0–61.8%)</span></span>'
+            f'<span style="color:#e2e8f0;">📐 <b>Fib ย่อ {fib["direction"]}</b> '
+            f'<span style="color:#94a3b8;">(50.0–61.8%)</span></span>'
             f'<span style="color:{zone_col};font-weight:600;">โซนย่อ {zone_txt}{pct_txt}</span>'
             f'</div>'
-            f'<div style="padding:3px 10px 7px 10px;color:#94a3b8;font-size:0.8rem;">'
+            f'<div style="padding:3px 10px 7px 10px;color:#cbd5e1;font-size:0.95rem;">'
             f'สวิงที่ใช้อ้างอิง: {fib["start_price"]:,.2f} → {fib["end_price"]:,.2f} '
             f'({_zz_time(fib.get("start_time"))} → {_zz_time(fib.get("end_time"))})</div>'
         )
     else:
         rows_html += (
             f'<div style="padding:7px 10px;border-bottom:1px solid rgba(148,163,184,0.15);'
-            f'color:#64748b;">📐 <b>Fib ย่อ:</b> <span style="color:#94a3b8;">ยังไม่มีขาสวิงที่ตรงเทรนให้อ้างอิง</span></div>'
+            f'color:#e2e8f0;">📐 <b>Fib ย่อ:</b> <span style="color:#cbd5e1;">ยังไม่มีขาสวิงที่ตรงเทรนให้อ้างอิง</span></div>'
         )
 
     # OBV
@@ -1419,17 +1419,17 @@ def _reversal_panel_html(rev: dict, timeframe_str: str = "") -> str:
         obv_html = (
             f'<span style="color:#10b981;">🟢 OBV Divergence ขาขึ้น — แรงขายหมด</span>'
         )
-        obv_note = f'<span style="color:#94a3b8;font-size:0.8rem;">{rev.get("obv_note", "")}</span>'
+        obv_note = f'<span style="color:#cbd5e1;font-size:0.95rem;">{rev.get("obv_note", "")}</span>'
     elif obv_type == "BEARISH":
         obv_html = (
             f'<span style="color:#ef4444;">🔴 OBV Divergence ขาลง — แรงซื้อหมด</span>'
         )
-        obv_note = f'<span style="color:#94a3b8;font-size:0.8rem;">{rev.get("obv_note", "")}</span>'
+        obv_note = f'<span style="color:#cbd5e1;font-size:0.95rem;">{rev.get("obv_note", "")}</span>'
     else:
         obv_html = (
-            f'<span style="color:#94a3b8;">⚪ OBV: ยังไม่มี Divergence ที่ชัดเจน</span>'
+            f'<span style="color:#e2e8f0;">⚪ OBV: ยังไม่มี Divergence ที่ชัดเจน</span>'
         )
-        obv_note = '<span style="color:#94a3b8;font-size:0.8rem;">ตามแรงซื้อ/ขายสะสมปกติ</span>'
+        obv_note = '<span style="color:#cbd5e1;font-size:0.95rem;">ตามแรงซื้อ/ขายสะสมปกติ</span>'
     rows_html += (
         f'<div style="display:flex;flex-direction:column;gap:2px;'
         f'padding:7px 10px;border-bottom:1px solid rgba(148,163,184,0.15);">{obv_html}{obv_note}</div>'
@@ -1452,15 +1452,15 @@ def _reversal_panel_html(rev: dict, timeframe_str: str = "") -> str:
             f'padding:7px 10px;border-bottom:1px solid rgba(148,163,184,0.15);">'
             f'<span style="color:{pat_col};">{pat_emoji} แท่งกลับตัวพบ: '
             f'<b>{pat.get("kind", "")}</b> · {in_zone_tag} '
-            f'<span style="color:#64748b;">({_zz_time(pat.get("time"))})</span></span>'
-            f'<span style="color:#94a3b8;font-size:0.8rem;">{pat_note}</span>'
+            f'<span style="color:#cbd5e1;">({_zz_time(pat.get("time"))})</span></span>'
+            f'<span style="color:#cbd5e1;font-size:0.95rem;">{pat_note}</span>'
             f'</div>'
         )
     else:
         rows_html += (
             f'<div style="padding:7px 10px;border-bottom:1px solid rgba(148,163,184,0.15);'
-            f'color:#64748b;">🕯️ <b>แท่งกลับตัว:</b> '
-            f'<span style="color:#94a3b8;">ยังไม่มี Pin Bar / Engulfing ใน 10 แท่งสุดท้าย</span></div>'
+            f'color:#e2e8f0;">🕯️ <b>แท่งกลับตัว:</b> '
+            f'<span style="color:#cbd5e1;">ยังไม่มี Pin Bar / Engulfing ใน 10 แท่งสุดท้าย</span></div>'
         )
 
     # MACD
@@ -1471,7 +1471,7 @@ def _reversal_panel_html(rev: dict, timeframe_str: str = "") -> str:
         f'<div style="display:flex;flex-direction:column;gap:2px;'
         f'padding:7px 10px;border-bottom:1px solid rgba(148,163,184,0.15);">'
         f'<span style="color:{macd_col};">📊 <b>MACD:</b> {macd_txt}</span>'
-        f'{cross_txt and f"<span style=color:#94a3b8;font-size:0.8rem;>{cross_txt}</span>" or ""}'
+        f'{cross_txt and f"<span style=color:#cbd5e1;font-size:0.95rem;>{cross_txt}</span>" or ""}'
         f'</div>'
     )
 
@@ -1484,30 +1484,30 @@ def _reversal_panel_html(rev: dict, timeframe_str: str = "") -> str:
             f'<div style="display:flex;flex-direction:column;gap:2px;'
             f'padding:7px 10px;border-bottom:1px solid rgba(148,163,184,0.15);">'
             f'<div style="display:flex;justify-content:space-between;gap:10px;">'
-            f'<span style="color:#64748b;">🏛️ <b>VWAP:</b></span>'
+            f'<span style="color:#e2e8f0;">🏛️ <b>VWAP:</b></span>'
             f'<span style="color:{col};">{vwap:,.2f} — {side}</span>'
             f'</div>'
-            f'{vwap_note and f"<span style=color:#94a3b8;font-size:0.8rem;>*{vwap_note}</span>" or ""}'
+            f'{vwap_note and f"<span style=color:#cbd5e1;font-size:0.95rem;>*{vwap_note}</span>" or ""}'
             f'</div>'
         )
     else:
         rows_html += (
             f'<div style="padding:7px 10px;border-bottom:1px solid rgba(148,163,184,0.15);'
-            f'color:#64748b;">🏛️ <b>VWAP:</b> <span style="color:#94a3b8;">ข้อมูลไม่พอ</span></div>'
+            f'color:#e2e8f0;">🏛️ <b>VWAP:</b> <span style="color:#cbd5e1;">ข้อมูลไม่พอ</span></div>'
         )
 
     # หัวข้อ + verdict
     return (
         f'<div style="background:rgba(15,23,42,0.8);border:1px solid rgba(99,102,241,0.4);'
-        f'border-radius:12px;padding:12px 18px;margin:12px 0 6px 0;">'
+        f'border-radius:12px;padding:16px 20px;margin:12px 0 6px 0;font-size:1.05rem;line-height:1.5;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'
-        f'<span style="font-weight:700;color:#e2e8f0;font-size:1rem;">🎯 จุดกลับตัวตามเทรน '
+        f'<span style="font-weight:800;color:#f8fafc;font-size:1.15rem;">🎯 จุดกลับตัวตามเทรน '
         f'<span style="color:{trend_color};">({trend_label})</span></span>'
         f'<span style="background:{verdict_color};color:#0b0e14;border-radius:8px;'
-        f'padding:4px 12px;font-weight:700;font-size:0.85rem;">{verdict}</span>'
+        f'padding:5px 14px;font-weight:800;font-size:1rem;">{verdict}</span>'
         f'</div>'
         f'{rows_html}'
-        f'<div style="margin-top:6px;color:#64748b;font-size:0.78rem;">'
+        f'<div style="margin-top:8px;color:#94a3b8;font-size:0.9rem;line-height:1.5;">'
         f'{"" if rev.get("ms_clear", True) else "<b style=color:#fbbf24;>⚠️ โครงสร้างราคายังไม่ยืนยันทิศทาง</b> — ทิศที่ใช้วิเคราะห์มาจาก ZigZag/EMA ควรตัดสินแบบระวัง<br/>"}'
         f'*อ้างอิง OANDA tick volume ขนาด {timeframe_str} — เข้าตามเทรนเมื่อราคาย่อเข้าโซน + มีแรง'
         f'และแท่งยืนยันครบ</div>'
