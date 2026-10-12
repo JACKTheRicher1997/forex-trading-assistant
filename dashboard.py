@@ -2513,9 +2513,10 @@ if signal_result:
                     _rv = mtf_rsi.get(tf)
                     if _rv is not None:
                         _z, _zc, _ztip = _rsi_zone(_rv)
+                        _zshort = _z.split(" (")[0]
                         st.markdown(
                             f'<div style="text-align:center;font-size:0.78rem;color:{_zc};'
-                            f'margin-top:2px;" title="{_ztip}">RSI {float(_rv):.1f}</div>',
+                            f'margin-top:2px;" title="{_ztip}">RSI {float(_rv):.1f} · {_zshort}</div>',
                             unsafe_allow_html=True,
                         )
 
@@ -2526,7 +2527,8 @@ if signal_result:
                 '<div style="color:#94a3b8;font-size:0.85rem;margin-top:8px;">'
                 '📊 RSI ทุกกรอบเวลา: '
                 + " · ".join(
-                    f'<b style="color:{_rsi_zone(mtf_rsi[tf])[1]}">{tf} {float(mtf_rsi[tf]):.0f}</b>'
+                    f'<b style="color:{_rsi_zone(mtf_rsi[tf])[1]}">{tf} {float(mtf_rsi[tf]):.0f}'
+                    f' {_rsi_zone(mtf_rsi[tf])[0].split(" (")[0]}</b>'
                     if mtf_rsi.get(tf) is not None else f'{tf} —'
                     for tf in mtf_tfs
                 )
