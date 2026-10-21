@@ -18,13 +18,25 @@
         {
           "candle_time": "2026-10-20T16:50:00+00:00",
           "signal": "CROSS_DOWN"
+        },
+        {
+          "candle_time": "2026-10-21T09:35:00+00:00",
+          "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-10-21T10:00:00+00:00",
+          "signal": "CROSS_DOWN"
+        },
+        {
+          "candle_time": "2026-10-21T10:45:00+00:00",
+          "signal": "CROSS_UP"
         }
       ],
       "last_cross": {
-        "candle_time": "2026-10-20T16:50:00+00:00",
-        "signal": "CROSS_DOWN"
+        "candle_time": "2026-10-21T10:45:00+00:00",
+        "signal": "CROSS_UP"
       },
-      "updated_at": "2026-10-20T17:09:43.350292+00:00"
+      "updated_at": "2026-10-21T12:23:39.953726+00:00"
     }
   }
 }
