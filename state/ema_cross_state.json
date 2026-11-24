@@ -22,13 +22,17 @@
         {
           "candle_time": "2026-11-24T00:40:00+00:00",
           "signal": "CROSS_UP"
+        },
+        {
+          "candle_time": "2026-11-24T04:20:00+00:00",
+          "signal": "CROSS_DOWN"
         }
       ],
       "last_cross": {
-        "candle_time": "2026-11-24T00:40:00+00:00",
-        "signal": "CROSS_UP"
+        "candle_time": "2026-11-24T04:20:00+00:00",
+        "signal": "CROSS_DOWN"
       },
-      "updated_at": "2026-11-24T00:53:38.312840+00:00"
+      "updated_at": "2026-11-24T10:36:02.537926+00:00"
     }
   }
 }
